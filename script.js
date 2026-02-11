@@ -6,9 +6,11 @@ const colorPicker = document.getElementById('color');
 const undoBtn = document.getElementById('undo');
 const redoBtn = document.getElementById('redo');
 const fillBtn = document.getElementById('fill');
+const eraserBtn = document.getElementById('eraser');
 const zoomOutBtn = document.getElementById('zoom-out');
 const saveBtn = document.getElementById('save');
 const addLayerBtn = document.getElementById('add-layer');
+const mergeLayerBtn = document.getElementById('merge-layer');
 const imageInput = document.getElementById('image-input');
 
 let layers = [];
@@ -16,6 +18,7 @@ let activeLayer = null;
 let history = [];
 let redoStack = [];
 let isFilling = false;
+let usingEraser = false;
 
 for(let i=1;i<=20;i++){
   const opt = document.createElement('option');
@@ -25,7 +28,6 @@ for(let i=1;i<=20;i++){
 }
 brushSelect.value=5;
 
-// 레이어 생성
 function createLayer(name='Layer'){
   const canvas = document.createElement('canvas');
   canvas.width = container.clientWidth;
@@ -41,29 +43,36 @@ function createLayer(name='Layer'){
   return layer;
 }
 
-// 레이어 패널 갱신
 function updateLayersPanel(){
   layersPanel.innerHTML='';
-  layers.forEach(layer=>{
+  layers.forEach((layer,i)=>{
     const div = document.createElement('div');
     div.className='layer-item';
     div.innerHTML=`<span>${layer.name}</span>
     <input type="range" min="0" max="2" step="0.01" value="${layer.brightness}">
-    <button>${layer.visible?'👁':'🚫'}</button>`;
+    <button>${layer.visible?'👁':'🚫'}</button>
+    <button class="del">❌</button>
+    <button class="up">⬆️</button>
+    <button class="down">⬇️</button>`;
     const range = div.querySelector('input');
     const btn = div.querySelector('button');
-    range.addEventListener('input',()=>{ layer.brightness = parseFloat(range.value); drawLayers(); });
+    const delBtn = div.querySelector('.del');
+    const upBtn = div.querySelector('.up');
+    const downBtn = div.querySelector('.down');
+
+    range.addEventListener('input',()=>{ layer.brightness=parseFloat(range.value); drawLayers(); });
     btn.addEventListener('click',()=>{
-      layer.visible=!layer.visible;
-      btn.textContent = layer.visible?'👁':'🚫';
-      drawLayers();
+      layer.visible=!layer.visible; btn.textContent = layer.visible?'👁':'🚫'; drawLayers();
     });
+    delBtn.addEventListener('click',()=>{ deleteLayer(layer); });
+    upBtn.addEventListener('click',()=>{ moveLayer(layer, -1); });
+    downBtn.addEventListener('click',()=>{ moveLayer(layer,1); });
+
     div.addEventListener('click',()=>{ activeLayer = layer; });
     layersPanel.appendChild(div);
   });
 }
 
-// 레이어 표시
 function drawLayers(){
   layers.forEach(layer=>{
     layer.canvas.style.display=layer.visible?'block':'none';
@@ -71,7 +80,6 @@ function drawLayers(){
   });
 }
 
-// 그림 그리기 이벤트
 function attachDrawingEvents(canvas){
   let drawing=false, lastX=0, lastY=0;
   function start(e){
@@ -88,14 +96,16 @@ function attachDrawingEvents(canvas){
   function move(e){
     if(!drawing) return;
     const pos = getPos(e);
-    activeLayer.ctx.strokeStyle=colorPicker.value;
-    activeLayer.ctx.lineWidth=brushSelect.value;
+    activeLayer.ctx.strokeStyle = usingEraser?'#ffffff':colorPicker.value;
+    activeLayer.ctx.lineWidth = brushSelect.value;
     activeLayer.ctx.lineCap='round';
+    activeLayer.ctx.globalCompositeOperation = usingEraser?'destination-out':'source-over';
     activeLayer.ctx.beginPath();
     activeLayer.ctx.moveTo(lastX,lastY);
     activeLayer.ctx.lineTo(pos.x,pos.y);
     activeLayer.ctx.stroke();
     lastX=pos.x; lastY=pos.y;
+    activeLayer.ctx.globalCompositeOperation='source-over';
   }
   function end(){ if(drawing) saveHistory(); drawing=false; }
 
@@ -120,7 +130,7 @@ function fillCanvas(ctx,color){
 
 function saveHistory(){
   const img = activeLayer.ctx.getImageData(0,0,activeLayer.canvas.width,activeLayer.canvas.height);
-  history.push({layer:activeLayer, img});
+  history.push({layer:activeLayer,img});
   redoStack=[];
 }
 
@@ -149,9 +159,7 @@ saveBtn.addEventListener('click',()=>{
   tmpCanvas.width=container.clientWidth;
   tmpCanvas.height=container.clientHeight;
   const tmpCtx=tmpCanvas.getContext('2d');
-  layers.forEach(layer=>{
-    if(layer.visible) tmpCtx.drawImage(layer.canvas,0,0);
-  });
+  layers.forEach(layer=>{ if(layer.visible) tmpCtx.drawImage(layer.canvas,0,0); });
   link.href=tmpCanvas.toDataURL();
   link.click();
   addGallery(tmpCanvas.toDataURL());
@@ -171,6 +179,34 @@ function loadGalleryImage(src){
 }
 
 addLayerBtn.addEventListener('click',()=>{ createLayer('Layer '+(layers.length+1)); });
+eraserBtn.addEventListener('click',()=>{ usingEraser = !usingEraser; });
+
+function deleteLayer(layer){
+  if(layers.length<=1) return;
+  container.removeChild(layer.canvas);
+  layers = layers.filter(l=>l!==layer);
+  if(activeLayer===layer) activeLayer=layers[layers.length-1];
+  updateLayersPanel();
+}
+
+function moveLayer(layer,dir){
+  const idx = layers.indexOf(layer);
+  let newIdx = idx+dir;
+  if(newIdx<0 || newIdx>=layers.length) return;
+  layers.splice(idx,1);
+  layers.splice(newIdx,0,layer);
+  layers.forEach(c=>container.appendChild(c.canvas));
+  updateLayersPanel();
+}
+
+mergeLayerBtn.addEventListener('click',()=>{
+  if(layers.length<2) return;
+  const top = layers[layers.length-1];
+  const below = layers[layers.length-2];
+  below.ctx.drawImage(top.canvas,0,0);
+  deleteLayer(top);
+  saveHistory();
+});
 
 // 이미지 삽입 + 모바일 터치 지원
 imageInput.addEventListener('change',(e)=>{
@@ -218,7 +254,6 @@ imageInput.addEventListener('change',(e)=>{
         lastAngle = getAngle(e.touches[0], e.touches[1]);
       }
     });
-
     overlay.addEventListener('touchmove',(e)=>{
       e.preventDefault();
       if(e.touches.length==1 && dragging){
@@ -237,17 +272,10 @@ imageInput.addEventListener('change',(e)=>{
       }
       drawOverlay();
     });
+    overlay.addEventListener('touchend',(e)=>{ if(e.touches.length==0) dragging=false; });
 
-    overlay.addEventListener('touchend',(e)=>{
-      if(e.touches.length==0) dragging=false;
-    });
-
-    function getDistance(p1,p2){
-      return Math.hypot(p2.clientX-p1.clientX, p2.clientY-p1.clientY);
-    }
-    function getAngle(p1,p2){
-      return Math.atan2(p2.clientY-p1.clientY, p2.clientX-p1.clientX)*180/Math.PI;
-    }
+    function getDistance(p1,p2){ return Math.hypot(p2.clientX-p1.clientX, p2.clientY-p1.clientY); }
+    function getAngle(p1,p2){ return Math.atan2(p2.clientY-p1.clientY, p2.clientX-p1.clientX)*180/Math.PI; }
 
     const confirmBtn=document.createElement('button');
     confirmBtn.textContent='✔';
@@ -279,7 +307,6 @@ imageInput.addEventListener('change',(e)=>{
       container.removeChild(confirmBtn);
       container.removeChild(cancelBtn);
     });
-
   };
   img.src=URL.createObjectURL(file);
 });
