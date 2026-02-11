@@ -1,59 +1,71 @@
-body, html {
+html, body {
   margin: 0;
   padding: 0;
-  width: 100%;
   height: 100%;
   overflow: hidden;
   touch-action: none;
-  user-select: none;
-  font-family: sans-serif;
+  font-family: Arial, sans-serif;
 }
 
-#controls {
+#toolbar {
   position: fixed;
   top: 0;
   left: 0;
+  width: 100%;
   background: #eee;
-  padding: 5px;
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
-  z-index: 1000;
+  padding: 5px;
+  z-index: 2000;
+  box-sizing: border-box;
+}
+
+#toolbar button, #toolbar select, #toolbar input[type=color], #toolbar input[type=file] {
+  margin: 2px;
+  padding: 5px;
+  font-size: 14px;
+}
+
+#container {
+  position: absolute;
+  top: 50px;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  overflow: hidden;
 }
 
 #canvas-container {
-  position: absolute;
-  top: 50px;
-  left: 0;
   width: 100%;
-  height: calc(100% - 50px);
+  height: 100%;
+  position: relative;
   background: #fff;
   touch-action: none;
 }
 
 #layers-panel {
-  position: fixed;
-  top: 50px;
-  right: 0;
-  width: 200px;
-  max-height: calc(100% - 50px);
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: rgba(255,255,255,0.9);
+  max-height: 80%;
+  width: 180px;
   overflow-y: auto;
-  background: rgba(240,240,240,0.95);
-  border-left: 1px solid #ccc;
-  z-index: 1001;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  padding: 5px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  z-index: 1500;
 }
 
-#layers-panel:not(.visible) { display: none; }
+#layers-panel.visible {
+  display: block;
+}
 
 .layer-item {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 2px;
+  flex-direction: column;
   border-bottom: 1px solid #ccc;
+  padding: 2px 0;
   cursor: pointer;
 }
 
@@ -61,27 +73,38 @@ body, html {
   background: #d0eaff;
 }
 
-.layer-controls button {
-  margin-left: 2px;
+.layer-item .layer-controls {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+}
+
+.layer-item button {
+  font-size: 12px;
+  padding: 2px 4px;
 }
 
 #gallery-panel {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 100px;
-  background: rgba(220,220,220,0.95);
-  overflow-x: auto;
-  white-space: nowrap;
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
   display: flex;
-  align-items: center;
-  padding: 2px;
-  gap: 2px;
-  z-index: 1002;
+  flex-wrap: wrap;
+  max-height: 40%;
+  overflow-y: auto;
+  background: rgba(255,255,255,0.9);
+  padding: 5px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  z-index: 1500;
 }
 
 .gallery-item {
-  height: 90px;
+  width: 60px;
+  height: 60px;
+  object-fit: cover;
+  margin: 2px;
   cursor: pointer;
+  border: 1px solid #aaa;
+  border-radius: 3px;
 }
