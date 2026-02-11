@@ -281,76 +281,91 @@ imageInput.addEventListener('change', (ev)=>{
 });
 
 function openImageEditorOverlay(image){
-  const overlay=document.createElement('canvas');
-  overlay.width=container.clientWidth;
-  overlay.height=container.clientHeight;
-  overlay.style.position='absolute';
-  overlay.style.left='0';
-  overlay.style.top='0';
-  overlay.style.zIndex=1000; 
-  overlay.style.touchAction='none';
-  container.appendChild(overlay);
-  const octx=overlay.getContext('2d');
-
-  const src=document.createElement('canvas');
-  src.width=image.width;
-  src.height=image.height;
-  src.getContext('2d').drawImage(image,0,0);
-
-  let scale=Math.min(Math.min(overlay.width/image.width, overlay.height/image.height),1);
-  let angle=0;
-  let pos={x:(overlay.width-image.width*scale)/2, y:(overlay.height-image.height*scale)/2};
-  let dragging=false;
-  let lastPoint=null;
-
-  function draw(){ octx.clearRect(0,0,overlay.width,overlay.height); octx.save(); octx.translate(pos.x+image.width*scale/2,pos.y+image.height*scale/2); octx.rotate(angle*Math.PI/180); octx.drawImage(src,-image.width*scale/2,-image.height*scale/2,image.width*scale,image.height*scale); octx.restore(); }
-
-  function getPointFromEvent(e,idx=0){ const rect=container.getBoundingClientRect(); if(e.touches&&e.touches.length>idx) return {x:e.touches[idx].clientX-rect.left,y:e.touches[idx].clientY-rect.top}; else if(e.clientX!==undefined) return {x:e.clientX-rect.left, y:e.clientY-rect.top}; return null; }
-
-  overlay.addEventListener('mousedown',(e)=>{ if(e.target.tagName==='BUTTON') return; dragging=true; lastPoint=getPointFromEvent(e); });
-  window.addEventListener('mousemove',(e)=>{ if(!dragging) return; const p=getPointFromEvent(e); pos.x+=p.x-lastPoint.x; pos.y+=p.y-lastPoint.y; lastPoint=p; draw(); });
-  window.addEventListener('mouseup',()=>{ dragging=false; });
-
-  overlay.addEventListener('touchstart',(e)=>{ if(e.target.tagName==='BUTTON') return; if(e.touches.length===1){ lastPoint=getPointFromEvent(e,0); dragging=true; }},{passive:false});
-  overlay.addEventListener('touchmove',(e)=>{ if(dragging&&e.touches.length===1){ const p=getPointFromEvent(e,0); pos.x+=p.x-lastPoint.x; pos.y+=p.y-lastPoint.y; lastPoint=p; draw(); }},{passive:false});
-  overlay.addEventListener('touchend',(e)=>{ if(e.touches.length===0) dragging=false; });
-
-  const overlayWrapper=document.createElement('div');
-  overlayWrapper.style.position='absolute';
-  overlayWrapper.style.top='0';
-  overlayWrapper.style.left='0';
-  overlayWrapper.style.width='100%';
-  overlayWrapper.style.height='100%';
-  overlayWrapper.style.zIndex=2000;
-  overlayWrapper.style.display='flex';
-  overlayWrapper.style.justifyContent='center';
-  overlayWrapper.style.alignItems='flex-end';
+  const overlayWrapper = document.createElement('div');
+  overlayWrapper.style.position = 'absolute';
+  overlayWrapper.style.top = '0';
+  overlayWrapper.style.left = '0';
+  overlayWrapper.style.width = '100%';
+  overlayWrapper.style.height = '100%';
+  overlayWrapper.style.zIndex = 3000;
+  overlayWrapper.style.pointerEvents = 'auto';
   container.appendChild(overlayWrapper);
 
-  const actions=document.createElement('div');
-  actions.className='overlay-action';
-  actions.style.zIndex=2100;
-  actions.style.marginBottom='10px';
-  const confirmBtn=document.createElement('button'); confirmBtn.textContent='✔';
-  const cancelBtn=document.createElement('button'); cancelBtn.textContent='✖';
-  actions.appendChild(cancelBtn); actions.appendChild(confirmBtn);
+  const overlayCanvas = document.createElement('canvas');
+  overlayCanvas.width = container.clientWidth;
+  overlayCanvas.height = container.clientHeight;
+  overlayCanvas.style.position = 'absolute';
+  overlayCanvas.style.left = '0';
+  overlayCanvas.style.top = '0';
+  overlayCanvas.style.zIndex = 1;
+  overlayWrapper.appendChild(overlayCanvas);
+  const octx = overlayCanvas.getContext('2d');
+
+  const srcCanvas = document.createElement('canvas');
+  srcCanvas.width = image.width;
+  srcCanvas.height = image.height;
+  srcCanvas.getContext('2d').drawImage(image, 0, 0);
+
+  let scale = Math.min(Math.min(overlayCanvas.width / image.width, overlayCanvas.height / image.height), 1);
+  let angle = 0;
+  let pos = { x: (overlayCanvas.width - image.width * scale) / 2, y: (overlayCanvas.height - image.height * scale) / 2 };
+  let dragging = false;
+  let lastPoint = null;
+
+  function draw() {
+    octx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    octx.save();
+    octx.translate(pos.x + image.width * scale / 2, pos.y + image.height * scale / 2);
+    octx.rotate(angle * Math.PI / 180);
+    octx.drawImage(srcCanvas, -image.width * scale / 2, -image.height * scale / 2, image.width * scale, image.height * scale);
+    octx.restore();
+  }
+
+  function getPointFromEvent(e, idx = 0) {
+    const rect = overlayCanvas.getBoundingClientRect();
+    if (e.touches && e.touches.length > idx) return { x: e.touches[idx].clientX - rect.left, y: e.touches[idx].clientY - rect.top };
+    else if (e.clientX !== undefined) return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    return null;
+  }
+
+  overlayCanvas.addEventListener('mousedown', (e) => { dragging = true; lastPoint = getPointFromEvent(e); });
+  window.addEventListener('mousemove', (e) => { if (!dragging) return; const p = getPointFromEvent(e); pos.x += p.x - lastPoint.x; pos.y += p.y - lastPoint.y; lastPoint = p; draw(); });
+  window.addEventListener('mouseup', () => { dragging = false; });
+
+  overlayCanvas.addEventListener('touchstart', (e) => { if (e.touches.length === 1) { lastPoint = getPointFromEvent(e, 0); dragging = true; } }, { passive: false });
+  overlayCanvas.addEventListener('touchmove', (e) => { if (dragging && e.touches.length === 1) { const p = getPointFromEvent(e, 0); pos.x += p.x - lastPoint.x; pos.y += p.y - lastPoint.y; lastPoint = p; draw(); } }, { passive: false });
+  overlayCanvas.addEventListener('touchend', (e) => { if (e.touches.length === 0) dragging = false; });
+
+  const actions = document.createElement('div');
+  actions.style.position = 'absolute';
+  actions.style.bottom = '20px';
+  actions.style.left = '50%';
+  actions.style.transform = 'translateX(-50%)';
+  actions.style.zIndex = 10;
   overlayWrapper.appendChild(actions);
 
-  confirmBtn.addEventListener('click',()=>{
-    if(!activeLayer) activeLayer=createLayer('Layer '+(layers.length+1));
+  const confirmBtn = document.createElement('button');
+  confirmBtn.textContent = '✔';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = '✖';
+  actions.appendChild(cancelBtn);
+  actions.appendChild(confirmBtn);
+
+  confirmBtn.addEventListener('click', () => {
+    if (!activeLayer) activeLayer = createLayer('Layer ' + (layers.length + 1));
     activeLayer.ctx.save();
-    activeLayer.ctx.translate(pos.x+image.width*scale/2,pos.y+image.height*scale/2);
-    activeLayer.ctx.rotate(angle*Math.PI/180);
-    activeLayer.ctx.drawImage(src,-image.width*scale/2,-image.height*scale/2,image.width*scale,image.height*scale);
+    activeLayer.ctx.translate(pos.x + image.width * scale / 2, pos.y + image.height * scale / 2);
+    activeLayer.ctx.rotate(angle * Math.PI / 180);
+    activeLayer.ctx.drawImage(srcCanvas, -image.width * scale / 2, -image.height * scale / 2, image.width * scale, image.height * scale);
     activeLayer.ctx.restore();
     saveHistory();
     cleanup();
   });
 
-  cancelBtn.addEventListener('click',cleanup);
-  function cleanup(){
-    if(overlay && overlay.parentElement) container.removeChild(overlay);
-    if(overlayWrapper && overlayWrapper.parentElement) container.removeChild(overlayWrapper);
+  cancelBtn.addEventListener('click', cleanup);
+
+  function cleanup() {
+    if (overlayWrapper && overlayWrapper.parentElement) container.removeChild(overlayWrapper);
   }
 
   draw();
