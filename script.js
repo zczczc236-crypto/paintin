@@ -1,9 +1,10 @@
-/* 파일명: script.js */
-/* 전체 통합본 (모바일 대응 개선판) */
-/* 기존 기능 그대로 유지: 브러시(1-20), 색상, 페인트통, 지우개, undo/redo, 레이어(추가/삭제/이동/합체/명도/토글), 갤러리, 저장, 이미지 삽입(이동/확대/축소/회전/확정/취소) */
-/* 모바일 레이아웃/터치 문제 해결: 컨테이너 사이즈 고정, 캔버스 DPI 처리, overlay 버튼 우선노출, pointer-events 처리, pinch/rotate 개선 */
+/* 파일명: script.js
+   전체 통합본 — 모바일/PC 모두 대응, 기존 기능(브러시1-20, 컬러, 페인트통, 지우개, undo/redo,
+   레이어 추가/삭제/이동/합체/밝기, 갤러리, 저장, 이미지 삽입(이동/핀치/휠 줌/회전)/확인/취소) 그대로 유지.
+   요약 없음, 코드 전체 제공.
+*/
 
-/* ====== DOM 요소 참조 ====== */
+/* ===== DOM 참조 ===== */
 const toolbar = document.getElementById('toolbar');
 const container = document.getElementById('canvas-container');
 const layersPanel = document.getElementById('layers-panel');
@@ -21,18 +22,18 @@ const mergeLayerBtn = document.getElementById('merge-layer');
 const toggleLayersBtn = document.getElementById('toggle-layers');
 const imageInput = document.getElementById('image-input');
 
-/* ====== 상태 ====== */
-let layers = []; // {canvas, ctx, name, brightness, visible}
+/* ===== 상태 ===== */
+let layers = []; // { canvas, ctx, name, brightness, visible }
 let activeLayer = null;
 let history = [];
 let redoStack = [];
 let usingEraser = false;
 
-/* ====== 유틸: 캔버스 고해상도 설정 ====== */
+/* ===== 유틸: 고해상도 캔버스 설정 (devicePixelRatio 적용) ===== */
 function setCanvasSizeForDisplay(canvas, width, height) {
   const ratio = window.devicePixelRatio || 1;
-  canvas.width = Math.max(1, Math.floor(width * ratio));
-  canvas.height = Math.max(1, Math.floor(height * ratio));
+  canvas.width = Math.max(1, Math.round(width * ratio));
+  canvas.height = Math.max(1, Math.round(height * ratio));
   canvas.style.width = width + 'px';
   canvas.style.height = height + 'px';
   const ctx = canvas.getContext('2d');
@@ -40,19 +41,16 @@ function setCanvasSizeForDisplay(canvas, width, height) {
   return ctx;
 }
 
-/* ====== 레이아웃: 모바일에 맞춘 컨테이너 크기 적용 ====== */
+/* ===== 레이아웃/컨테이너 크기 (모바일 우선) ===== */
 function updateContainerSize() {
-  // Prefer toolbar height if exists; otherwise fallback
   const toolbarHeight = toolbar ? toolbar.getBoundingClientRect().height : 0;
-  const width = window.innerWidth;
-  const height = Math.max(100, window.innerHeight - toolbarHeight);
-  // ensure container element occupies available area
-  container.style.width = width + 'px';
-  container.style.height = height + 'px';
-  // for safety, also set canvas-container client size will update on resizeAllCanvases
+  const w = window.innerWidth;
+  const h = Math.max(100, window.innerHeight - toolbarHeight);
+  container.style.width = w + 'px';
+  container.style.height = h + 'px';
 }
 
-/* ====== 브러시 초기화 (1~20) ====== */
+/* ===== 브러시 옵션 초기화 (1~20) ===== */
 for (let i = 1; i <= 20; i++) {
   const opt = document.createElement('option');
   opt.value = i;
@@ -61,60 +59,52 @@ for (let i = 1; i <= 20; i++) {
 }
 brushSelect.value = 5;
 
-/* ====== 초기화 이벤트 ====== */
+/* ===== 초기화 이벤트 ===== */
 window.addEventListener('load', () => {
   updateContainerSize();
-  createLayer('Layer 1');
+  if (!layers.length) createLayer('Layer 1');
   resizeAllCanvases();
   updateLayersPanel();
 });
-window.addEventListener('resize', () => {
-  updateContainerSize();
-  // small debounce to avoid thrash
-  clearTimeout(window.__resize_timeout);
-  window.__resize_timeout = setTimeout(() => {
-    resizeAllCanvases();
-  }, 80);
+window.addEventListener('orientationchange', () => {
+  setTimeout(() => { updateContainerSize(); resizeAllCanvases(); }, 120);
 });
+window.addEventListener('resize', () => { updateContainerSize(); resizeAllCanvases(); });
 
-/* ====== 캔버스 리사이즈 (내용 보존) ====== */
+/* ===== 캔버스 리사이즈 (내용 보존) ===== */
 function resizeAllCanvases() {
   const w = container.clientWidth;
   const h = container.clientHeight;
   layers.forEach(layer => {
-    // preserve current content into temp
+    // Preserve current content
     const tmp = document.createElement('canvas');
-    const tmpCtx = tmp.getContext('2d');
     tmp.width = layer.canvas.width;
     tmp.height = layer.canvas.height;
-    tmpCtx.drawImage(layer.canvas, 0, 0);
-    // reset canvas for new display size
+    tmp.getContext('2d').drawImage(layer.canvas, 0, 0);
+    // Resize and restore
     const ctx = setCanvasSizeForDisplay(layer.canvas, w, h);
-    // draw preserved content scaled to new logical size
-    const ratio = window.devicePixelRatio || 1;
     try {
       ctx.clearRect(0, 0, w, h);
+      const ratio = window.devicePixelRatio || 1;
       ctx.drawImage(tmp, 0, 0, tmp.width / ratio, tmp.height / ratio, 0, 0, w, h);
     } catch (e) {
-      // fallback: just clear
       ctx.clearRect(0, 0, w, h);
     }
   });
 }
 
-/* ====== 레이어 생성/삭제/이동/합체 ====== */
+/* ===== 레이어 관련 ===== */
 function createLayer(name = `Layer ${layers.length + 1}`) {
   const canvas = document.createElement('canvas');
   canvas.className = 'layer-canvas';
-  const w = container.clientWidth || Math.max(800, window.innerWidth);
-  const h = container.clientHeight || Math.max(600, window.innerHeight - (toolbar ? toolbar.clientHeight : 48));
-  const ctx = setCanvasSizeForDisplay(canvas, w, h);
-  canvas.style.zIndex = layers.length;
   canvas.style.position = 'absolute';
   canvas.style.left = '0';
   canvas.style.top = '0';
   canvas.style.touchAction = 'none';
   container.appendChild(canvas);
+  const ctx = setCanvasSizeForDisplay(canvas, container.clientWidth || 800, container.clientHeight || 600);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
   const layer = { canvas, ctx, name, brightness: 1, visible: true };
   layers.push(layer);
   activeLayer = layer;
@@ -131,7 +121,7 @@ function deleteLayer(layer) {
   layers.splice(idx, 1);
   if (layer.canvas.parentElement) container.removeChild(layer.canvas);
   if (activeLayer === layer) activeLayer = layers[layers.length - 1];
-  layers.forEach((l, i) => { l.canvas.style.zIndex = i; if (l.canvas.parentElement) container.appendChild(l.canvas); });
+  layers.forEach((l, i) => { l.canvas.style.zIndex = i; });
   updateLayersPanel();
   saveHistory();
 }
@@ -164,7 +154,6 @@ function mergeActiveWithNeighbor() {
   saveHistory();
 }
 
-/* ====== 레이어 렌더링 ====== */
 function drawLayers() {
   layers.forEach(layer => {
     layer.canvas.style.display = layer.visible ? 'block' : 'none';
@@ -172,7 +161,7 @@ function drawLayers() {
   });
 }
 
-/* ====== 레이어 패널 UI 업데이트 ====== */
+/* ===== 레이어 패널 UI 업데이트 ===== */
 function updateLayersPanel() {
   if (!layersPanel) return;
   layersPanel.innerHTML = '';
@@ -191,20 +180,47 @@ function updateLayersPanel() {
     range.value = layer.brightness;
     const controls = document.createElement('div');
     controls.className = 'layer-controls';
-    const visBtn = document.createElement('button'); visBtn.textContent = layer.visible ? '👁' : '🚫';
-    const upBtn = document.createElement('button'); upBtn.textContent = '⬆️';
-    const downBtn = document.createElement('button'); downBtn.textContent = '⬇️';
-    const delBtn = document.createElement('button'); delBtn.textContent = '❌';
-    controls.appendChild(visBtn); controls.appendChild(upBtn); controls.appendChild(downBtn); controls.appendChild(delBtn);
+    const visBtn = document.createElement('button');
+    visBtn.textContent = layer.visible ? '👁' : '🚫';
+    const upBtn = document.createElement('button');
+    upBtn.textContent = '⬆️';
+    const downBtn = document.createElement('button');
+    downBtn.textContent = '⬇️';
+    const delBtn = document.createElement('button');
+    delBtn.textContent = '❌';
+    controls.appendChild(visBtn);
+    controls.appendChild(upBtn);
+    controls.appendChild(downBtn);
+    controls.appendChild(delBtn);
 
     item.appendChild(name);
     item.appendChild(range);
     item.appendChild(controls);
 
-    item.addEventListener('click', (e) => { if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return; activeLayer = layer; updateLayersPanel(); });
-    range.addEventListener('input', () => { layer.brightness = parseFloat(range.value); drawLayers(); });
-    visBtn.addEventListener('click', (e) => { e.stopPropagation(); layer.visible = !layer.visible; visBtn.textContent = layer.visible ? '👁' : '🚫'; drawLayers(); saveHistory(); });
-    delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteLayer(layer); });
+    item.addEventListener('click', (e) => {
+      if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
+      activeLayer = layer;
+      updateLayersPanel();
+    });
+
+    range.addEventListener('input', () => {
+      layer.brightness = parseFloat(range.value);
+      drawLayers();
+    });
+
+    visBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      layer.visible = !layer.visible;
+      visBtn.textContent = layer.visible ? '👁' : '🚫';
+      drawLayers();
+      saveHistory();
+    });
+
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteLayer(layer);
+    });
+
     upBtn.addEventListener('click', (e) => { e.stopPropagation(); moveLayer(layer, +1); });
     downBtn.addEventListener('click', (e) => { e.stopPropagation(); moveLayer(layer, -1); });
 
@@ -212,7 +228,7 @@ function updateLayersPanel() {
   }
 }
 
-/* ====== 히스토리 저장/복원 ====== */
+/* ===== 히스토리 저장/복원 ===== */
 function saveHistory() {
   if (!activeLayer) return;
   try {
@@ -221,21 +237,25 @@ function saveHistory() {
     history.push({ layerIndex: idx, dataUrl: data });
     if (history.length > 200) history.shift();
     redoStack = [];
-  } catch (e) { /* ignore */ }
+  } catch (e) {
+    // ignore if toDataURL fails
+  }
 }
-async function restoreSnapshot(snapshot) {
+
+function restoreSnapshot(snapshot) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
       const layer = layers[snapshot.layerIndex];
       if (!layer) return resolve();
-      layer.ctx.clearRect(0, 0, layer.canvas.width / (window.devicePixelRatio || 1), layer.canvas.height / (window.devicePixelRatio || 1));
+      layer.ctx.clearRect(0, 0, container.clientWidth, container.clientHeight);
       layer.ctx.drawImage(img, 0, 0, container.clientWidth, container.clientHeight);
       resolve();
     };
     img.src = snapshot.dataUrl;
   });
 }
+
 undoBtn.addEventListener('click', async () => {
   if (history.length === 0) return;
   const last = history.pop();
@@ -246,6 +266,7 @@ undoBtn.addEventListener('click', async () => {
   await restoreSnapshot(last);
   updateLayersPanel();
 });
+
 redoBtn.addEventListener('click', async () => {
   if (redoStack.length === 0) return;
   const next = redoStack.pop();
@@ -257,7 +278,7 @@ redoBtn.addEventListener('click', async () => {
   updateLayersPanel();
 });
 
-/* ====== 도구: 페인트통, 지우개 ====== */
+/* ===== 도구: 페인트통, 지우개 ===== */
 fillBtn.addEventListener('click', () => {
   if (!activeLayer) return;
   activeLayer.ctx.save();
@@ -266,12 +287,13 @@ fillBtn.addEventListener('click', () => {
   activeLayer.ctx.restore();
   saveHistory();
 });
+
 eraserBtn.addEventListener('click', () => {
   usingEraser = !usingEraser;
   eraserBtn.style.background = usingEraser ? '#ddd' : '';
 });
 
-/* ====== 그리기 이벤트: Pointer Events 통합 (모바일/펜/마우스) ====== */
+/* ===== 그리기 이벤트 (Pointer Events 통합) ===== */
 function attachDrawingEvents(canvas) {
   let drawing = false;
   let pointerId = null;
@@ -281,7 +303,8 @@ function attachDrawingEvents(canvas) {
     const rect = container.getBoundingClientRect();
     return { x: clientX - rect.left, y: clientY - rect.top };
   }
-  function onDown(e) {
+
+  function onPointerDown(e) {
     if (e.target && e.target.tagName === 'BUTTON') return;
     canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
     pointerId = e.pointerId;
@@ -293,7 +316,8 @@ function attachDrawingEvents(canvas) {
       ctx.moveTo(last.x, last.y);
     }
   }
-  function onMove(e) {
+
+  function onPointerMove(e) {
     if (!drawing || e.pointerId !== pointerId) return;
     const p = toCanvasPos(e.clientX, e.clientY);
     if (!activeLayer) return;
@@ -311,7 +335,8 @@ function attachDrawingEvents(canvas) {
     ctx.restore();
     last = p;
   }
-  function onUp(e) {
+
+  function onPointerUp(e) {
     if (e.pointerId !== pointerId) return;
     canvas.releasePointerCapture && canvas.releasePointerCapture(e.pointerId);
     pointerId = null;
@@ -319,14 +344,14 @@ function attachDrawingEvents(canvas) {
     saveHistory();
   }
 
-  canvas.addEventListener('pointerdown', onDown, { passive: false });
-  window.addEventListener('pointermove', onMove, { passive: false });
-  window.addEventListener('pointerup', onUp);
-  canvas.addEventListener('pointercancel', onUp);
-  canvas.addEventListener('pointerleave', (e) => { if (drawing && e.pointerId === pointerId) onUp(e); });
+  canvas.addEventListener('pointerdown', onPointerDown, { passive: false });
+  window.addEventListener('pointermove', onPointerMove, { passive: false });
+  window.addEventListener('pointerup', onPointerUp);
+  canvas.addEventListener('pointercancel', onPointerUp);
+  canvas.addEventListener('pointerleave', (e) => { if (drawing && e.pointerId === pointerId) onPointerUp(e); });
 }
 
-/* ====== 저장 / 갤러리 ====== */
+/* ===== 저장 / 갤러리 ===== */
 saveBtn.addEventListener('click', () => {
   const tmp = document.createElement('canvas');
   setCanvasSizeForDisplay(tmp, container.clientWidth, container.clientHeight);
@@ -337,69 +362,72 @@ saveBtn.addEventListener('click', () => {
   link.download = 'drawing.png';
   link.href = data;
   link.click();
-  addGalleryImage(data);
+  addGalleryThumbnail(data);
 });
-function addGalleryImage(data) {
+
+function addGalleryThumbnail(dataUrl) {
   const img = document.createElement('img');
-  img.src = data;
+  img.src = dataUrl;
   img.className = 'gallery-item';
+  img.title = '불러오기';
   img.addEventListener('click', () => {
     const image = new Image();
     image.onload = () => {
-      if (!activeLayer) createLayer();
+      if (!activeLayer) createLayer('Layer ' + (layers.length + 1));
       activeLayer.ctx.clearRect(0, 0, container.clientWidth, container.clientHeight);
       activeLayer.ctx.drawImage(image, 0, 0, container.clientWidth, container.clientHeight);
       saveHistory();
     };
-    image.src = data;
+    image.src = dataUrl;
   });
   galleryPanel.appendChild(img);
 }
 
-/* ====== UI 연결 ====== */
+/* ===== UI 연결 ===== */
 toggleLayersBtn.addEventListener('click', () => { layersPanel.classList.toggle('visible'); });
 addLayerBtn.addEventListener('click', () => createLayer());
 mergeLayerBtn.addEventListener('click', () => mergeActiveWithNeighbor());
 
-/* ====== 이미지 삽입: overlay (pan/pinch/wheel/rotate) - 모바일 우선 개선 ====== */
-imageInput.addEventListener('change', (e) => {
-  const file = e.target.files && e.target.files[0];
-  if (!file) return;
+/* ===== 이미지 삽입 (overlay) =====
+   - wrapper appended to document.body with very high z-index so buttons always clickable
+   - pointer events for pan/pinch/rotate, wheel zoom for desktop
+   - action buttons: zoom in/out, rotate left/right, confirm, cancel
+   - while overlay active, container pointer-events left intact but wrapper sits above UI
+*/
+imageInput.addEventListener('change', (ev) => {
+  const f = ev.target.files && ev.target.files[0];
+  if (!f) return;
   const img = new Image();
   img.onload = () => openImageOverlay(img);
-  img.src = URL.createObjectURL(file);
+  img.src = URL.createObjectURL(f);
   imageInput.value = '';
 });
 
 function openImageOverlay(image) {
-  // wrapper above everything
+  // wrapper covers viewport to ensure buttons above panels & canvas
   const wrapper = document.createElement('div');
   wrapper.style.position = 'fixed';
   wrapper.style.left = '0';
   wrapper.style.top = '0';
   wrapper.style.width = '100vw';
   wrapper.style.height = '100vh';
-  wrapper.style.zIndex = '100000'; // ensure above panels
+  wrapper.style.zIndex = '2147483000'; // very high
   wrapper.style.display = 'flex';
-  wrapper.style.alignItems = 'stretch';
+  wrapper.style.alignItems = 'center';
   wrapper.style.justifyContent = 'center';
-  wrapper.style.pointerEvents = 'auto';
-  // background to slightly darken - but keep pointer events for buttons
   wrapper.style.background = 'rgba(0,0,0,0.12)';
+  wrapper.style.touchAction = 'none';
   document.body.appendChild(wrapper);
 
-  // content container inside wrapper sized same as drawing container
+  // inner area matches container size for consistent coordinates
   const inner = document.createElement('div');
   inner.style.position = 'relative';
   inner.style.width = container.clientWidth + 'px';
   inner.style.height = container.clientHeight + 'px';
-  inner.style.marginTop = (toolbar ? toolbar.getBoundingClientRect().height : 0) + 'px';
   inner.style.touchAction = 'none';
-  inner.style.display = 'flex';
-  inner.style.alignItems = 'center';
-  inner.style.justifyContent = 'center';
   wrapper.appendChild(inner);
 
+  // overlay canvas inside inner
   const overlay = document.createElement('canvas');
   overlay.style.position = 'absolute';
   overlay.style.left = '0';
@@ -410,7 +438,7 @@ function openImageOverlay(image) {
   inner.appendChild(overlay);
   const octx = setCanvasSizeForDisplay(overlay, inner.clientWidth, inner.clientHeight);
 
-  // source canvas holds original image pixels
+  // source canvas at image natural size
   const src = document.createElement('canvas');
   setCanvasSizeForDisplay(src, image.width, image.height);
   src.getContext('2d').drawImage(image, 0, 0);
@@ -426,7 +454,7 @@ function openImageOverlay(image) {
   let prevDist = 0;
   let prevAngle = 0;
 
-  function redrawOverlay() {
+  function redraw() {
     const w = overlay.width / (window.devicePixelRatio || 1);
     const h = overlay.height / (window.devicePixelRatio || 1);
     octx.clearRect(0, 0, w, h);
@@ -436,7 +464,7 @@ function openImageOverlay(image) {
     octx.drawImage(src, - (image.width * scale) / 2, - (image.height * scale) / 2, image.width * scale, image.height * scale);
     octx.restore();
   }
-  redrawOverlay();
+  redraw();
 
   function onPointerDown(e) {
     if (e.button && e.button !== 0) return;
@@ -464,7 +492,7 @@ function openImageOverlay(image) {
       prevMiddle = { x: p.x, y: p.y };
       pos.x += dx;
       pos.y += dy;
-      redrawOverlay();
+      redraw();
     } else if (pointers.size >= 2) {
       const pts = Array.from(pointers.values());
       const a = pts[0], b = pts[1];
@@ -482,12 +510,13 @@ function openImageOverlay(image) {
         pos.x = mx - ((mx - pos.x) * (scale / oldScale));
         pos.y = my - ((my - pos.y) * (scale / oldScale));
       }
+
       const deltaAngle = newAngle - prevAngle;
       rotation += deltaAngle;
       prevDist = newDist;
       prevAngle = newAngle;
       prevMiddle = newMiddle;
-      redrawOverlay();
+      redraw();
     }
   }
 
@@ -510,29 +539,30 @@ function openImageOverlay(image) {
   overlay.addEventListener('pointercancel', onPointerUp);
   overlay.addEventListener('pointerleave', onPointerUp);
 
-  // wheel zoom (desktop)
+  // wheel zoom on desktop
   overlay.addEventListener('wheel', (ev) => {
     ev.preventDefault();
     const rect = overlay.getBoundingClientRect();
     const mx = ev.clientX - rect.left;
     const my = ev.clientY - rect.top;
-    const delta = ev.deltaY < 0 ? 1.12 : 0.88;
+    const factor = ev.deltaY < 0 ? 1.12 : 0.88;
     const oldScale = scale;
-    scale = Math.max(0.05, Math.min(scale * delta, 20));
+    scale = Math.max(0.05, Math.min(scale * factor, 20));
     pos.x = mx - ((mx - pos.x) * (scale / oldScale));
     pos.y = my - ((my - pos.y) * (scale / oldScale));
-    redrawOverlay();
+    redraw();
   }, { passive: false });
 
-  // actions panel (always above layersPanel)
+  // actions panel
   const actions = document.createElement('div');
   actions.className = 'overlay-actions';
   actions.style.position = 'absolute';
   actions.style.bottom = '16px';
   actions.style.left = '50%';
   actions.style.transform = 'translateX(-50%)';
-  actions.style.zIndex = '100001';
-  actions.style.pointerEvents = 'auto';
+  actions.style.zIndex = '2147483001';
+  actions.style.display = 'flex';
+  actions.style.gap = '8px';
   wrapper.appendChild(actions);
 
   const zoomOutBtn_local = document.createElement('button'); zoomOutBtn_local.textContent = '-';
@@ -556,8 +586,9 @@ function openImageOverlay(image) {
     scale = Math.min(scale * 1.2, 20);
     pos.x = cx - ((cx - pos.x) * (scale / oldScale));
     pos.y = cy - ((cy - pos.y) * (scale / oldScale));
-    redrawOverlay();
+    redraw();
   });
+
   zoomOutBtn_local.addEventListener('click', () => {
     const rect = overlay.getBoundingClientRect();
     const cx = rect.width / 2, cy = rect.height / 2;
@@ -565,10 +596,11 @@ function openImageOverlay(image) {
     scale = Math.max(scale * 0.85, 0.05);
     pos.x = cx - ((cx - pos.x) * (scale / oldScale));
     pos.y = cy - ((cy - pos.y) * (scale / oldScale));
-    redrawOverlay();
+    redraw();
   });
-  rotL.addEventListener('click', () => { rotation -= 15; redrawOverlay(); });
-  rotR.addEventListener('click', () => { rotation += 15; redrawOverlay(); });
+
+  rotL.addEventListener('click', () => { rotation -= 15; redraw(); });
+  rotR.addEventListener('click', () => { rotation += 15; redraw(); });
 
   confirmBtn.addEventListener('click', () => {
     if (!activeLayer) createLayer();
@@ -580,6 +612,7 @@ function openImageOverlay(image) {
     saveHistory();
     cleanup();
   });
+
   cancelBtn.addEventListener('click', cleanup);
 
   function cleanup() {
@@ -587,21 +620,22 @@ function openImageOverlay(image) {
       overlay.removeEventListener('pointerdown', onPointerDown);
       overlay.removeEventListener('pointermove', onPointerMove);
       overlay.removeEventListener('pointerup', onPointerUp);
+      overlay.removeEventListener('pointercancel', onPointerUp);
     } catch (e) { }
     if (wrapper.parentElement) document.body.removeChild(wrapper);
   }
 
-  // ensure overlay initially drawn and centered
-  redrawOverlay();
+  // ensure initial draw
+  redraw();
 }
 
-/* ====== 단축키 ====== */
+/* ===== 단축키 ===== */
 window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undoBtn.click(); }
   if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) { e.preventDefault(); redoBtn.click(); }
 });
 
-/* ====== 초기 레이어 보장 및 초기 UI 업데이트 ====== */
+/* ===== 보장: 최소 1 레이어, 초기 UI 업데이트 ===== */
 if (layers.length === 0) createLayer('Layer 1');
 updateLayersPanel();
 drawLayers();
