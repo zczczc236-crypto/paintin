@@ -53,7 +53,7 @@ function resizeContainerCanvases(){
   });
 }
 
-/* ========= 레이어 기능 ========= */
+/* 레이어 생성 */
 function createLayer(name='Layer'){
   const canvas = document.createElement('canvas');
   canvas.width = container.clientWidth || 800;
@@ -74,6 +74,7 @@ function createLayer(name='Layer'){
   return layer;
 }
 
+/* 레이어 삭제 */
 function deleteLayer(layer){
   if(layers.length <= 1) return;
   const idx = layers.indexOf(layer);
@@ -85,6 +86,7 @@ function deleteLayer(layer){
   saveHistory();
 }
 
+/* 레이어 이동: dir -1 down, +1 up */
 function moveLayer(layer, dir){
   const idx = layers.indexOf(layer);
   const newIdx = idx + dir;
@@ -96,6 +98,7 @@ function moveLayer(layer, dir){
   saveHistory();
 }
 
+/* 레이어 합치기: active와 아래 레이어 합치기 */
 function mergeActiveWithNeighbor(){
   if(layers.length < 2) return;
   const idx = layers.indexOf(activeLayer);
@@ -113,6 +116,7 @@ function mergeActiveWithNeighbor(){
   saveHistory();
 }
 
+/* 레이어 그리기(가시성/명도) */
 function drawLayers(){
   layers.forEach((layer) => {
     layer.canvas.style.display = layer.visible ? 'block' : 'none';
@@ -120,6 +124,7 @@ function drawLayers(){
   });
 }
 
+/* 레이어 패널 업데이트 */
 function updateLayersPanel(){
   layersPanel.innerHTML = '';
   for(let i = layers.length - 1; i >= 0; i--){
@@ -222,7 +227,7 @@ function attachDrawingEvents(canvas){
   let pointerId=null;
   let last={x:0,y:0};
   function toCanvasPos(clientX,clientY){ const rect = container.getBoundingClientRect(); return {x:clientX-rect.left, y:clientY-rect.top}; }
-  function pointerdown(e){ if(e.button && e.button!==0) return; canvas.setPointerCapture&&canvas.setPointerCapture(e.pointerId); pointerId=e.pointerId; drawing=true; last=toCanvasPos(e.clientX,e.clientY); if(activeLayer){ const ctx=activeLayer.ctx; ctx.beginPath(); ctx.moveTo(last.x,last.y); } }
+  function pointerdown(e){ if(e.target.tagName==='BUTTON') return; canvas.setPointerCapture&&canvas.setPointerCapture(e.pointerId); pointerId=e.pointerId; drawing=true; last=toCanvasPos(e.clientX,e.clientY); if(activeLayer){ const ctx=activeLayer.ctx; ctx.beginPath(); ctx.moveTo(last.x,last.y); } }
   function pointermove(e){ if(!drawing||e.pointerId!==pointerId) return; const p=toCanvasPos(e.clientX,e.clientY); if(!activeLayer) return; const ctx=activeLayer.ctx; ctx.save(); ctx.globalCompositeOperation = usingEraser?'destination-out':'source-over'; ctx.strokeStyle=colorPicker.value; ctx.lineWidth=parseFloat(brushSelect.value)||5; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.beginPath(); ctx.moveTo(last.x,last.y); ctx.lineTo(p.x,p.y); ctx.stroke(); ctx.restore(); last=p; }
   function pointerup(e){ if(e.pointerId!==pointerId) return; canvas.releasePointerCapture&&canvas.releasePointerCapture(e.pointerId); pointerId=null; drawing=false; saveHistory(); }
   canvas.addEventListener('pointerdown',pointerdown,{passive:false});
@@ -333,7 +338,7 @@ function openImageEditorOverlay(image){
 
   const actions = document.createElement('div');
   actions.style.position = 'absolute';
-  actions.style.bottom = '10px';
+  actions.style.bottom = '20px';
   actions.style.left = '50%';
   actions.style.transform = 'translateX(-50%)';
   actions.style.zIndex = 10;
@@ -341,12 +346,8 @@ function openImageEditorOverlay(image){
 
   const confirmBtn = document.createElement('button');
   confirmBtn.textContent = '✔';
-  confirmBtn.style.fontSize='18px';
-  confirmBtn.style.padding='8px 12px';
   const cancelBtn = document.createElement('button');
   cancelBtn.textContent = '✖';
-  cancelBtn.style.fontSize='18px';
-  cancelBtn.style.padding='8px 12px';
   actions.appendChild(cancelBtn);
   actions.appendChild(confirmBtn);
 
@@ -376,6 +377,7 @@ window.addEventListener('keydown',(e)=>{
   if((e.ctrlKey||e.metaKey)&& (e.key.toLowerCase()==='y' || (e.shiftKey && e.key.toLowerCase()==='z'))){ e.preventDefault(); redoBtn.click(); }
 });
 
+/* ========= 최소 1 레이어 ========= */
 if(layers.length===0) createLayer('Layer 1');
 updateLayersPanel();
 drawLayers();
