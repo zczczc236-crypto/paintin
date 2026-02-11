@@ -287,7 +287,7 @@ function openImageEditorOverlay(image){
   overlay.style.position='absolute';
   overlay.style.left='0';
   overlay.style.top='0';
-  overlay.style.zIndex=2000;
+  overlay.style.zIndex=1000; 
   overlay.style.touchAction='none';
   container.appendChild(overlay);
   const octx=overlay.getContext('2d');
@@ -307,18 +307,34 @@ function openImageEditorOverlay(image){
 
   function getPointFromEvent(e,idx=0){ const rect=container.getBoundingClientRect(); if(e.touches&&e.touches.length>idx) return {x:e.touches[idx].clientX-rect.left,y:e.touches[idx].clientY-rect.top}; else if(e.clientX!==undefined) return {x:e.clientX-rect.left, y:e.clientY-rect.top}; return null; }
 
-  overlay.addEventListener('mousedown',(e)=>{ dragging=true; lastPoint=getPointFromEvent(e); });
+  overlay.addEventListener('mousedown',(e)=>{ if(e.target.tagName==='BUTTON') return; dragging=true; lastPoint=getPointFromEvent(e); });
   window.addEventListener('mousemove',(e)=>{ if(!dragging) return; const p=getPointFromEvent(e); pos.x+=p.x-lastPoint.x; pos.y+=p.y-lastPoint.y; lastPoint=p; draw(); });
   window.addEventListener('mouseup',()=>{ dragging=false; });
 
-  overlay.addEventListener('touchstart',(e)=>{ e.preventDefault(); if(e.touches.length===1){ lastPoint=getPointFromEvent(e,0); dragging=true; }},{passive:false});
-  overlay.addEventListener('touchmove',(e)=>{ e.preventDefault(); if(dragging&&e.touches.length===1){ const p=getPointFromEvent(e,0); pos.x+=p.x-lastPoint.x; pos.y+=p.y-lastPoint.y; lastPoint=p; draw(); }},{passive:false});
+  overlay.addEventListener('touchstart',(e)=>{ if(e.target.tagName==='BUTTON') return; if(e.touches.length===1){ lastPoint=getPointFromEvent(e,0); dragging=true; }},{passive:false});
+  overlay.addEventListener('touchmove',(e)=>{ if(dragging&&e.touches.length===1){ const p=getPointFromEvent(e,0); pos.x+=p.x-lastPoint.x; pos.y+=p.y-lastPoint.y; lastPoint=p; draw(); }},{passive:false});
   overlay.addEventListener('touchend',(e)=>{ if(e.touches.length===0) dragging=false; });
 
-  const actions=document.createElement('div'); actions.className='overlay-action';
+  const overlayWrapper=document.createElement('div');
+  overlayWrapper.style.position='absolute';
+  overlayWrapper.style.top='0';
+  overlayWrapper.style.left='0';
+  overlayWrapper.style.width='100%';
+  overlayWrapper.style.height='100%';
+  overlayWrapper.style.zIndex=2000;
+  overlayWrapper.style.display='flex';
+  overlayWrapper.style.justifyContent='center';
+  overlayWrapper.style.alignItems='flex-end';
+  container.appendChild(overlayWrapper);
+
+  const actions=document.createElement('div');
+  actions.className='overlay-action';
+  actions.style.zIndex=2100;
+  actions.style.marginBottom='10px';
   const confirmBtn=document.createElement('button'); confirmBtn.textContent='✔';
   const cancelBtn=document.createElement('button'); cancelBtn.textContent='✖';
-  actions.appendChild(cancelBtn); actions.appendChild(confirmBtn); document.body.appendChild(actions);
+  actions.appendChild(cancelBtn); actions.appendChild(confirmBtn);
+  overlayWrapper.appendChild(actions);
 
   confirmBtn.addEventListener('click',()=>{
     if(!activeLayer) activeLayer=createLayer('Layer '+(layers.length+1));
@@ -331,8 +347,13 @@ function openImageEditorOverlay(image){
     cleanup();
   });
 
-  cancelBtn.addEventListener('click', cleanup);
-  function cleanup(){ if(overlay && overlay.parentElement) container.removeChild(overlay); if(actions && actions.parentElement) document.body.removeChild(actions); }
+  cancelBtn.addEventListener('click',cleanup);
+  function cleanup(){
+    if(overlay && overlay.parentElement) container.removeChild(overlay);
+    if(overlayWrapper && overlayWrapper.parentElement) container.removeChild(overlayWrapper);
+  }
+
+  draw();
 }
 
 /* ========= 단축키 ========= */
