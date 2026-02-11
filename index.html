@@ -1,29 +1,33 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<meta charset="utf-8">
+<meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no" />
 <title>그림웹</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="toolbar">
-  브러시: <select id="brush-size"></select>
-  <input type="color" id="color" value="#000000">
-  <button id="undo">취소</button>
-  <button id="redo">되돌리기</button>
-  <button id="fill">페인트통</button>
-  <button id="eraser">지우개</button>
-  <button id="zoom-out">줌아웃</button>
-  <button id="save">그림저장</button>
-  <button id="add-layer">레이어추가</button>
-  <button id="merge-layer">레이어합체</button>
-  <button id="toggle-layers">레이어창</button>
-  <input type="file" id="image-input" accept="image/*">
-</div>
-<div id="canvas-container"></div>
-<div id="layers-panel" aria-hidden="true"></div>
-<div id="gallery-panel"></div>
-<script src="script.js"></script>
+  <div id="toolbar">
+    브러시: <select id="brush-size"></select>
+    <input type="color" id="color" value="#000000">
+    <button id="undo">취소</button>
+    <button id="redo">되돌리기</button>
+    <button id="fill">페인트통</button>
+    <button id="eraser">지우개</button>
+    <button id="zoom-out">줌아웃</button>
+    <button id="save">그림저장</button>
+    <button id="add-layer">레이어추가</button>
+    <button id="merge-layer">레이어합체</button>
+    <button id="toggle-layers">레이어창</button>
+    <input type="file" id="image-input" accept="image/*">
+  </div>
+
+  <div id="canvas-container"></div>
+
+  <div id="layers-panel" aria-hidden="true"></div>
+
+  <div id="gallery-panel"></div>
+
+  <script src="script.js"></script>
 </body>
 </html>
