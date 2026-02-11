@@ -4,7 +4,7 @@ button, select, input[type=color], input[type=range] { margin:2px; }
 #canvas-container { flex:1; position:relative; overflow:hidden; background:#fff; }
 canvas { position:absolute; top:0; left:0; width:100%; height:100%; touch-action:none; }
 #layers-panel { position:absolute; top:5px; right:5px; width:200px; max-height:80%; overflow:auto; background:rgba(255,255,255,0.9); border:1px solid #aaa; padding:5px; }
-.layer-item { display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; }
+.layer-item { display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; cursor:pointer; }
 #gallery-panel { position:absolute; bottom:5px; left:5px; width:250px; max-height:40%; overflow:auto; background:rgba(255,255,255,0.9); border:1px solid #aaa; padding:5px; display:flex; flex-wrap:wrap; gap:5px; }
 .gallery-item { width:60px; height:60px; object-fit:cover; border:1px solid #aaa; cursor:pointer; }
 input[type=range] { width:80px; }
