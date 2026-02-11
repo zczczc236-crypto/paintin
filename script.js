@@ -384,6 +384,15 @@ function insertImageOverlay(image){
   overlay.addEventListener('touchmove',(e)=>{ e.preventDefault(); if(!dragging)return; const p=getPt(e); pos.x+=p.x-lastPt.x; pos.y+=p.y-lastPt.y; lastPt=p; redraw();},{passive:false});
   overlay.addEventListener('touchend',(e)=>{ dragging=false; });
 
+  overlay.addEventListener('wheel',(e)=>{
+    e.preventDefault();
+    const delta = e.deltaY>0?0.9:1.1;
+    scale*=delta;
+    if(scale<0.05) scale=0.05;
+    if(scale>10) scale=10;
+    redraw();
+  });
+
   const btns=document.createElement('div');
   btns.style.position='absolute';
   btns.style.bottom='10px';
