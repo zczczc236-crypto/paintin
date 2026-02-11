@@ -12,6 +12,7 @@ const saveBtn = document.getElementById('save');
 const addLayerBtn = document.getElementById('add-layer');
 const mergeLayerBtn = document.getElementById('merge-layer');
 const imageInput = document.getElementById('image-input');
+const toggleLayersBtn = document.getElementById('toggle-layers');
 
 let layers = [];
 let activeLayer = null;
@@ -180,6 +181,7 @@ function loadGalleryImage(src){
 
 addLayerBtn.addEventListener('click',()=>{ createLayer('Layer '+(layers.length+1)); });
 eraserBtn.addEventListener('click',()=>{ usingEraser = !usingEraser; });
+toggleLayersBtn.addEventListener('click',()=>{ layersPanel.classList.toggle('visible'); });
 
 function deleteLayer(layer){
   if(layers.length<=1) return;
@@ -208,7 +210,6 @@ mergeLayerBtn.addEventListener('click',()=>{
   saveHistory();
 });
 
-// 이미지 삽입 + 모바일 터치 지원
 imageInput.addEventListener('change',(e)=>{
   const file = e.target.files[0];
   if(!file) return;
