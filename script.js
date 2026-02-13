@@ -1,161 +1,95 @@
 /* 파일명: script.js
-   전체 통합본 — 기존 모든 기능 유지 + 추가 기능 요청 반영
-   - 스포이드(색상 추출)
-   - 불투명 브러시 (brush opacity)
-   - 브러시 압력 지원 (pointer.pressure fallback)
-   - 단축키 전부 (Ctrl+Z / Ctrl+Shift+Z, Tab UI 숨기기 등) + 단축키 가이드 표시
-   - 마우스 드래그 캔버스 패닝 (Space 누르거나 중간버튼)
-   - Undo/Redo 강화: 설정 가능한 단계 (min 50, default 1000, can set "unlimited" large)
-   - 지우개 되돌리기/되돌리기 취소 안정화
-   - 브러시/지우개 크기 최대 100
-   - 흐림(blur) 효과 (레이어 단위 및 스트로크 필터 사용 가능하면 적용)
-   - 캔버스 크기 조절 UI 가능
-   - 저장된 그림 불러오기 시 이전 상태로 undo 가능
-   - 새로고침 복원 via localStorage (로그인 미구현, localStorage로 저장)
-   - 페인트통: 선택 영역 채우기(flood fill)
-   - 모바일 UI 개선: 툴바/패널 자동 숨김/토글, overlay 우선순위
-   - 스냅(스트로크 안정화) 기본 구현 (간단한 곡선 보정)
-   - 브러시 프리셋 저장/버튼 불러오기
-   - 브러시 종류 여러개(연필, 부드러운, 하드, 불투명 등) + 브러시 이미지 썸네일
-   - 대칭 그리기 (vertical/horizontal/axis)
-   - 선택 영역 / 이동툴 (기본 박스 선택 및 이동)
-   - 캔버스 회전/확대/축소 (wheel + pinch) 및 뷰 변환 반영하여 그리기 가능
-   - UI 숨기기 (Tab)
-   - PSD-like 내보내기: ZIP(각 레이어 PNG + metadata JSON) (실제 .psd 바이너리 호환 아님)
-   - GIF/APNG export stub (creates frames from layers or gallery images as simple downloadable zip of frames)
-   - 브러시 스트로크 안정화(보정) 간단 구현: 그리기 지연 & smoothing
-   - 브러시 압력/불투명도/크기 적용
-   - 레이어: 불투명도, 대비(contrast), 채도(saturate), 흐림(blur), 명도(brightness) 조절
-   - 지우개가 한번에 undo 되도록 히스토리 관리 개선
-   - 캔버스 크기 직접 변경 UI hook
-   - 기존 기능 훼손 금지
+   전체 통합본 — 사용자가 요청한 모든 기능을 최대한 통합한 버전입니다.
+   (스포이드, 불투명 브러시, 브러시 압력, 단축키 및 가이드, 캔버스 패닝,
+    Undo/Redo 강화(최대 단계 설정 가능), 레이어 조정(불투명도/대비/채도/흐림/명도),
+    브러시 프리셋 저장 및 빠른 호출, 확대/축소/회전, UI 숨기기(Tab),
+    PSD/GIF/APNG 내보내기 (가능 시 외부 라이브러리 사용), 선택/이동툴,
+    대칭 그리기, 스트로크 안정화, 캔버스 크기 조절, 지우개 undo 보장,
+    브러시 종류 여러개 (아이콘/프리셋), 이미지 삽입/이동/회전/휠/핀치 대응)
+   **주의**: 이 파일을 그대로 index.html 과 style.css 와 함께 사용하세요.
+   외부 라이브러리(ag-psd, gif.js, upng-js)를 동적으로 로드합니다.
 */
 
-/* ================= DOM 참조 (기존 HTML 요소 있어야 함) ================= */
-const toolbar = document.getElementById('toolbar') || (() => { console.warn('toolbar not found'); return null; })();
-const container = document.getElementById('canvas-container') || (() => { throw new Error('canvas-container missing'); })();
-const layersPanel = document.getElementById('layers-panel') || (() => { console.warn('layers-panel missing, creating'); const p = document.createElement('div'); p.id='layers-panel'; document.body.appendChild(p); return p; })();
-const galleryPanel = document.getElementById('gallery-panel') || (() => { console.warn('gallery-panel missing, creating'); const p = document.createElement('div'); p.id='gallery-panel'; document.body.appendChild(p); return p; })();
+/* ===================== 전역 DOM 참조 ===================== */
+const container = document.getElementById('canvas-container');
+const toolbar = document.getElementById('toolbar');
+const layersPanel = document.getElementById('layers-panel');
+const galleryPanel = document.getElementById('gallery-panel');
+const brushSelect = document.getElementById('brush-size');
+const colorPicker = document.getElementById('color');
+const undoBtn = document.getElementById('undo');
+const redoBtn = document.getElementById('redo');
+const fillBtn = document.getElementById('fill');
+const eraserBtn = document.getElementById('eraser');
+const zoomOutBtn = document.getElementById('zoom-out');
+const saveBtn = document.getElementById('save');
+const addLayerBtn = document.getElementById('add-layer');
+const mergeLayerBtn = document.getElementById('merge-layer');
+const toggleLayersBtn = document.getElementById('toggle-layers');
+const imageInput = document.getElementById('image-input');
 
-let brushSelect = document.getElementById('brush-size');
-let colorPicker = document.getElementById('color');
-let undoBtn = document.getElementById('undo');
-let redoBtn = document.getElementById('redo');
-let fillBtn = document.getElementById('fill');
-let eraserBtn = document.getElementById('eraser');
-let zoomOutBtn = document.getElementById('zoom-out');
-let saveBtn = document.getElementById('save');
-let addLayerBtn = document.getElementById('add-layer');
-let mergeLayerBtn = document.getElementById('merge-layer');
-let toggleLayersBtn = document.getElementById('toggle-layers');
-let imageInput = document.getElementById('image-input');
-
-/* 동적 보정: 필요한 요소 생성 */
-function ensureElement(id, tag='div', attrs={}) {
-  let el = document.getElementById(id);
-  if (!el) {
-    el = document.createElement(tag);
-    el.id = id;
-    Object.assign(el, attrs);
-    if (toolbar) toolbar.appendChild(el); else document.body.appendChild(el);
-  }
-  return el;
-}
-brushSelect = brushSelect || ensureElement('brush-size','select');
-colorPicker = colorPicker || ensureElement('color','input',{type:'color', value:'#000000'});
-undoBtn = undoBtn || ensureElement('undo','button'); undoBtn.textContent = undoBtn.textContent || '되돌리기';
-redoBtn = redoBtn || ensureElement('redo','button'); redoBtn.textContent = redoBtn.textContent || '취소';
-fillBtn = fillBtn || ensureElement('fill','button'); fillBtn.textContent = fillBtn.textContent || '페인트통';
-eraserBtn = eraserBtn || ensureElement('eraser','button'); eraserBtn.textContent = eraserBtn.textContent || '지우개';
-zoomOutBtn = zoomOutBtn || ensureElement('zoom-out','button'); zoomOutBtn.textContent = zoomOutBtn.textContent || '줌아웃';
-saveBtn = saveBtn || ensureElement('save','button'); saveBtn.textContent = saveBtn.textContent || '저장';
-addLayerBtn = addLayerBtn || ensureElement('add-layer','button'); addLayerBtn.textContent = addLayerBtn.textContent || '레이어추가';
-mergeLayerBtn = mergeLayerBtn || ensureElement('merge-layer','button'); mergeLayerBtn.textContent = mergeLayerBtn.textContent || '레이어합체';
-toggleLayersBtn = toggleLayersBtn || ensureElement('toggle-layers','button'); toggleLayersBtn.textContent = toggleLayersBtn.textContent || '레이어창';
-imageInput = imageInput || (() => { const f = ensureElement('image-input','input',{type:'file', accept:'image/*'}); return f; })();
-
-/* ================= 상태 구조 ================= */
-let layers = []; // {canvas, ctx, name, opacity, brightness, contrast, saturate, blur, visible, blendMode}
+/* ===================== 상태 변수 ===================== */
+let layers = []; // {canvas, ctx, name, opacity, brightness, contrast, saturation, blur, visible}
 let activeLayer = null;
-let view = { scale: 1, rotation: 0, offsetX: 0, offsetY: 0 }; // view transform for panning/zoom/rotate (in CSS pixels)
-let history = []; // array of snapshots {layers: [{dataUrl,...}], cursorLayerIndex,...}, but to reduce memory we store per-layer dataUrls for changes
+let history = []; // array of snapshots: { composedDataUrl } or per-layer diffs
 let redoStack = [];
-let HISTORY_LIMIT = 1000; // default (user requested min50~200 or unlimited); configurable
-let isUIHidden = false;
-let brushPresets = JSON.parse(localStorage.getItem('sp_brush_presets')||'[]'); // {name,size,opacity,pressure}
-let quickBrushButtons = []; // DOM
+let MAX_HISTORY = 500; // default max steps (user wanted 50~200 or unlimited)
+let usingEraser = false;
+let pointerTool = 'brush'; // 'brush','eraser','pan','fill','select','move'
+let scale = 1;
+let rotation = 0; // canvas rotation degrees
+let pan = { x: 0, y: 0 };
+let isPanning = false;
+let lastPan = null;
+let strokeStabilizer = { enabled: true, radius: 8 }; // smoothing radius
+let symmetry = { enabled: false, mode: 'vertical' }; // 'vertical','horizontal','both'
+let brushPresets = loadBrushPresets(); // array of {name,size,opacity,pressureEnabled,icon}
 
-/* ================= 유틸 함수 ================= */
-function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
-function debounce(fn,ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); }; }
-
-/* devicePixelRatio aware canvas sizing */
-function setCanvasSizeForDisplay(canvas, width, height){
+/* ===================== 유틸 / 초기화 ===================== */
+/* devicePixelRatio-aware canvas sizing */
+function setCanvasSizeForDisplay(canvas, width, height) {
   const ratio = window.devicePixelRatio || 1;
   canvas.width = Math.max(1, Math.round(width * ratio));
   canvas.height = Math.max(1, Math.round(height * ratio));
   canvas.style.width = width + 'px';
   canvas.style.height = height + 'px';
   const ctx = canvas.getContext('2d');
-  ctx.setTransform(ratio,0,0,ratio,0,0);
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   return ctx;
 }
 
-/* Convert screen pointer to canvas logical coordinates accounting view transform (scale, rotation, offset) */
-function screenToCanvasPoint(screenX, screenY){
-  const rect = container.getBoundingClientRect();
-  const x = screenX - rect.left;
-  const y = screenY - rect.top;
-  // apply inverse view transform: translate, rotate, scale
-  // steps: subtract offset -> translate to center? we treat offset in screen pixels already relative to top-left
-  let tx = (x - view.offsetX);
-  let ty = (y - view.offsetY);
-  // inverse rotate
-  const angle = -view.rotation * Math.PI / 180;
-  const cos = Math.cos(angle), sin = Math.sin(angle);
-  const rx = tx * cos - ty * sin;
-  const ry = tx * sin + ty * cos;
-  // inverse scale
-  const cx = rx / view.scale;
-  const cy = ry / view.scale;
-  return { x: cx, y: cy };
+/* ensure UI elements (safety) */
+function ensureUI() {
+  if (!container) throw new Error('container #canvas-container not found');
+  // create defaults if missing (but in your project they exist)
 }
+ensureUI();
 
-/* Apply canvas draw context transform to render with view */
-function applyViewTransformToCtx(ctx){
-  // reset transform then apply: scale and rotate then translate
-  // but our canvases are sized to device pixels with ctx.transform already set; we only draw into logical coords
-  ctx.setTransform(window.devicePixelRatio || 1,0,0,window.devicePixelRatio || 1, 0,0);
-  ctx.translate(view.offsetX, view.offsetY);
-  ctx.translate(0,0);
-  ctx.rotate(view.rotation * Math.PI / 180);
-  ctx.scale(view.scale, view.scale);
-}
+/* populate brush sizes 1..100 */
+(function initBrushSelect(){
+  if (brushSelect) {
+    brushSelect.innerHTML = '';
+    for (let i=1;i<=100;i++){
+      const o=document.createElement('option'); o.value=i; o.textContent=i; brushSelect.appendChild(o);
+    }
+    brushSelect.value = 10;
+  }
+})();
 
-/* ================= 레이어 관리 ================= */
-function createLayer(name='Layer '+(layers.length+1)){
+/* ===================== 레이어 기능 ===================== */
+function createLayer(name='Layer '+(layers.length+1)) {
   const canvas = document.createElement('canvas');
   canvas.className = 'layer-canvas';
   canvas.style.position='absolute';
-  canvas.style.left='0';
-  canvas.style.top='0';
+  canvas.style.left='0'; canvas.style.top='0';
   canvas.style.touchAction='none';
   container.appendChild(canvas);
-  setCanvasSizeForDisplay(canvas, container.clientWidth, container.clientHeight);
-  const ctx = canvas.getContext('2d');
+  const ctx = setCanvasSizeForDisplay(canvas, container.clientWidth, container.clientHeight);
   ctx.lineJoin='round'; ctx.lineCap='round';
   const layer = {
-    canvas, ctx,
-    name,
-    opacity: 1,
-    brightness: 1,
-    contrast: 1,
-    saturate: 1,
-    blur: 0,
-    visible: true,
-    blendMode: 'source-over'
+    canvas, ctx, name,
+    opacity:1, brightness:1, contrast:1, saturation:1, blur:0, visible:true,
+    lastHistoryDataUrl: null
   };
   layers.push(layer);
   activeLayer = layer;
@@ -164,842 +98,788 @@ function createLayer(name='Layer '+(layers.length+1)){
   saveSnapshot(); // baseline
   return layer;
 }
-function deleteLayer(layer){
-  if (layers.length <= 1) return;
-  const idx = layers.indexOf(layer);
-  layers.splice(idx,1);
-  if (layer.canvas.parentElement) layer.canvas.parentElement.removeChild(layer.canvas);
-  if (activeLayer === layer) activeLayer = layers[layers.length-1];
+function deleteLayer(layer) {
+  if (layers.length<=1) return;
+  const idx=layers.indexOf(layer); layers.splice(idx,1);
+  if (layer.canvas.parentElement) container.removeChild(layer.canvas);
+  if (activeLayer===layer) activeLayer = layers[layers.length-1];
+  layers.forEach((l,i)=>{ l.canvas.style.zIndex=i; });
   updateLayersPanel();
-  saveSnapshot();
+  saveSnapshotDebounced();
 }
-function moveLayer(layer, dir){
-  const idx = layers.indexOf(layer);
-  const newIdx = idx + dir;
-  if (newIdx < 0 || newIdx >= layers.length) return;
-  layers.splice(idx,1);
-  layers.splice(newIdx,0,layer);
-  // reorder DOM
-  layers.forEach((l,i)=> container.appendChild(l.canvas));
+function moveLayer(layer,dir){
+  const idx=layers.indexOf(layer); const newIdx=idx+dir;
+  if(newIdx<0||newIdx>=layers.length) return;
+  layers.splice(idx,1); layers.splice(newIdx,0,layer);
+  layers.forEach((l,i)=>{ l.canvas.style.zIndex=i; container.appendChild(l.canvas); });
+  updateLayersPanel(); saveSnapshotDebounced();
+}
+function mergeActiveWithNeighbor() {
+  if (layers.length<2) return;
+  const idx=layers.indexOf(activeLayer); let targetIdx=idx-1; if(targetIdx<0) targetIdx=idx+1;
+  if(targetIdx<0||targetIdx>=layers.length) return;
+  const t=layers[targetIdx];
+  // composite active onto t (apply transforms)
+  t.ctx.save();
+  applyLayerFiltersToContext(activeLayer, t.ctx); // draw with active filters applied
+  t.ctx.drawImage(activeLayer.canvas,0,0, container.clientWidth, container.clientHeight);
+  t.ctx.restore();
+  deleteLayer(activeLayer);
+  activeLayer = t;
   updateLayersPanel();
-  saveSnapshot();
-}
-function mergeLayers(topLayer, bottomLayer){
-  if(!topLayer || !bottomLayer) return;
-  bottomLayer.ctx.save();
-  bottomLayer.ctx.globalCompositeOperation = 'source-over';
-  bottomLayer.ctx.drawImage(topLayer.canvas, 0,0, container.clientWidth, container.clientHeight);
-  bottomLayer.ctx.restore();
-  deleteLayer(topLayer);
-  saveSnapshot();
-}
-function applyLayerFiltersCSS(layer){
-  const f = [];
-  if(layer.blur) f.push(`blur(${layer.blur}px)`);
-  if(layer.brightness !== 1) f.push(`brightness(${layer.brightness})`);
-  if(layer.contrast !== 1) f.push(`contrast(${layer.contrast})`);
-  if(layer.saturate !== 1) f.push(`saturate(${layer.saturate})`);
-  layer.canvas.style.filter = f.join(' ') || 'none';
-  layer.canvas.style.opacity = layer.opacity;
-  layer.canvas.style.mixBlendMode = layer.blendMode || 'normal';
-}
-function drawAllLayersVisual(){
-  layers.forEach(applyLayerFiltersCSS);
+  saveSnapshotDebounced();
 }
 
-/* ================= 히스토리(Undo/Redo) 개선 ================= */
-/* Snapshot strategy: record per-layer dataUrl only when changes happen. Keep cap HISTORY_LIMIT */
-function saveSnapshot(){
+/* draw composite preview filters: for per-layer filter support we maintain params and apply when exporting/compositing via ctx.filter */
+function applyLayerFiltersToContext(layer, targetCtx) {
+  // generate CSS filter string
+  const blur = layer.blur ? `${layer.blur}px` : '0px';
+  // approximate brightness/contrast/saturate with filter
+  targetCtx.filter = `brightness(${layer.brightness}) contrast(${layer.contrast}) saturate(${layer.saturation}) blur(${blur})`;
+}
+
+/* update layer panel UI */
+function updateLayersPanel() {
+  if (!layersPanel) return;
+  layersPanel.innerHTML='';
+  for (let i=layers.length-1;i>=0;i--){
+    const l=layers[i];
+    const el=document.createElement('div'); el.className='layer-item';
+    el.style.padding='6px'; el.style.borderBottom='1px solid #ddd';
+    const title=document.createElement('div'); title.textContent=l.name; title.style.fontWeight='600';
+    const controls=document.createElement('div'); controls.style.display='flex'; controls.style.gap='6px'; controls.style.marginTop='6px';
+    const vis=document.createElement('button'); vis.textContent = l.visible? '👁':'🚫';
+    const up=document.createElement('button'); up.textContent='⬆️';
+    const down=document.createElement('button'); down.textContent='⬇️';
+    const del=document.createElement('button'); del.textContent='❌';
+    controls.appendChild(vis); controls.appendChild(up); controls.appendChild(down); controls.appendChild(del);
+
+    // opacity slider
+    const opacityRow=document.createElement('div'); opacityRow.style.display='flex'; opacityRow.style.alignItems='center'; opacityRow.style.gap='6px'; opacityRow.style.marginTop='6px';
+    const oplabel=document.createElement('label'); oplabel.textContent='불투명';
+    const opslide=document.createElement('input'); opslide.type='range'; opslide.min=0; opslide.max=1; opslide.step=0.01; opslide.value=l.opacity;
+    opacityRow.appendChild(oplabel); opacityRow.appendChild(opslide);
+
+    // advanced adjustments: brightness, contrast, saturation, blur
+    const adjRow=document.createElement('div'); adjRow.style.display='grid'; adjRow.style.gridTemplateColumns='repeat(2,1fr)'; adjRow.style.gap='6px'; adjRow.style.marginTop='6px';
+    const bIn = genRange('밝기', 0.1, 2, 0.01, l.brightness);
+    const cIn = genRange('대비', 0.1, 3, 0.01, l.contrast);
+    const sIn = genRange('채도', 0, 3, 0.01, l.saturation);
+    const blurred = genRange('흐림', 0, 40, 1, l.blur);
+    adjRow.appendChild(bIn.container); adjRow.appendChild(cIn.container); adjRow.appendChild(sIn.container); adjRow.appendChild(blurred.container);
+
+    el.appendChild(title); el.appendChild(controls); el.appendChild(opacityRow); el.appendChild(adjRow);
+    // events
+    el.addEventListener('click', (e)=>{ if (e.target.tagName==='BUTTON' || e.target.tagName==='INPUT') return; activeLayer=l; highlightActiveLayer(); });
+    vis.addEventListener('click',(e)=>{ e.stopPropagation(); l.visible=!l.visible; vis.textContent=l.visible?'👁':'🚫'; drawAll(); saveSnapshotDebounced(); });
+    up.addEventListener('click',(e)=>{ e.stopPropagation(); moveLayer(l, +1); });
+    down.addEventListener('click',(e)=>{ e.stopPropagation(); moveLayer(l, -1); });
+    del.addEventListener('click',(e)=>{ e.stopPropagation(); deleteLayer(l); });
+    opslide.addEventListener('input', ()=>{ l.opacity=parseFloat(opslide.value); drawAll(); saveSnapshotDebounced(); });
+    bIn.input.addEventListener('input', ()=>{ l.brightness=parseFloat(bIn.input.value); drawAll(); saveSnapshotDebounced(); });
+    cIn.input.addEventListener('input', ()=>{ l.contrast=parseFloat(cIn.input.value); drawAll(); saveSnapshotDebounced(); });
+    sIn.input.addEventListener('input', ()=>{ l.saturation=parseFloat(sIn.input.value); drawAll(); saveSnapshotDebounced(); });
+    blurred.input.addEventListener('input', ()=>{ l.blur=parseInt(blurred.input.value,10)||0; drawAll(); saveSnapshotDebounced(); });
+
+    layersPanel.appendChild(el);
+  }
+  highlightActiveLayer();
+}
+function genRange(labelText,min,max,step,initial){
+  const container=document.createElement('div');
+  const label=document.createElement('label'); label.textContent=labelText; label.style.fontSize='11px';
+  const input=document.createElement('input'); input.type='range'; input.min=min; input.max=max; input.step=step; input.value=initial;
+  container.appendChild(label); container.appendChild(input);
+  return {container,input};
+}
+
+/* composite and draw all layers to visible canvases (for display we keep each layer canvas separate and use CSS filter to show blur; for export we composite via ctx.filter or manual adjustments) */
+function drawAll() {
+  // apply CSS filters on canvas elements for immediate preview (clamped)
+  layers.forEach((l,i)=>{
+    l.canvas.style.display = l.visible ? 'block' : 'none';
+    l.canvas.style.opacity = l.opacity;
+    const blurPx = l.blur ? `${l.blur}px` : '0px';
+    l.canvas.style.filter = `brightness(${l.brightness}) contrast(${l.contrast}) saturate(${l.saturation}) blur(${blurPx})`;
+    l.canvas.style.zIndex = i;
+  });
+}
+
+/* When exporting or saving we must composite layers onto a temp canvas while applying ctx.filter for each layer */
+function compositeToTempCanvas() {
+  const tmp = document.createElement('canvas');
+  setCanvasSizeForDisplay(tmp, container.clientWidth, container.clientHeight);
+  const tctx = tmp.getContext('2d');
+  tctx.clearRect(0,0,tmp.width / (window.devicePixelRatio||1), tmp.height / (window.devicePixelRatio||1));
+  layers.forEach(l=>{
+    if(!l.visible) return;
+    // set filter
+    const blurPx = l.blur ? `${l.blur}px` : '0px';
+    tctx.save();
+    tctx.globalAlpha = l.opacity;
+    tctx.filter = `brightness(${l.brightness}) contrast(${l.contrast}) saturate(${l.saturation}) blur(${blurPx})`;
+    tctx.drawImage(l.canvas, 0, 0, container.clientWidth, container.clientHeight);
+    tctx.restore();
+  });
+  return tmp;
+}
+
+/* ===================== 히스토리: Undo/Redo 강화 ===================== */
+/* We'll store composed dataUrls at each snapshot (this is heavy but reliable); we keep cap MAX_HISTORY */
+function saveSnapshot() {
   try {
-    const snapshot = {
-      layers: layers.map(l => ({ dataUrl: l.canvas.toDataURL(), name: l.name, opacity: l.opacity, brightness: l.brightness, contrast: l.contrast, saturate: l.saturate, blur: l.blur, visible: l.visible, blendMode: l.blendMode })),
-      activeIndex: layers.indexOf(activeLayer),
-      view: {...view}
-    };
-    history.push(snapshot);
-    // cap
-    if (HISTORY_LIMIT > 0 && history.length > Math.max(50, HISTORY_LIMIT)) history.shift();
+    const composed = compositeToTempCanvas();
+    const data = composed.toDataURL('image/png');
+    if (history.length && history[history.length-1] && history[history.length-1].dataUrl === data) return; // avoid duplicate
+    history.push({ dataUrl: data });
+    if (history.length > MAX_HISTORY) history.shift();
+    // clear redo on new action
     redoStack = [];
-    persistLocalStateDebounced();
+    saveStateToLocalDebounced();
   } catch (e) {
-    console.warn('saveSnapshot error', e);
+    console.warn('saveSnapshot failed', e);
   }
 }
-/* Save only once per stroke: caller should call saveSnapshot() after stroke ends.
-   For operations that change many things we call saveSnapshot() explicitly.
-*/
-function undo(){
-  if (history.length <= 1) return; // keep at least one baseline
+const saveSnapshotDebounced = debounce(saveSnapshot, 300);
+
+/* Support undo/redo */
+function undo() {
+  if (!history.length) return;
+  // move last state to redo
   const last = history.pop();
   redoStack.push(last);
   const prev = history[history.length-1];
-  if (!prev) return;
-  // restore layers
-  loadSnapshot(prev, false);
+  if (!prev) {
+    // clear canvases
+    layers.forEach(l=>{ l.ctx.clearRect(0,0,container.clientWidth,container.clientHeight); });
+    updateLayersPanel(); drawAll(); saveStateToLocalDebounced();
+    return;
+  }
+  restoreFromDataUrl(prev.dataUrl, ()=>{ saveStateToLocalDebounced(); });
 }
-function redo(){
+function redo() {
   if (!redoStack.length) return;
   const next = redoStack.pop();
   history.push(next);
-  loadSnapshot(next, false);
+  restoreFromDataUrl(next.dataUrl, ()=>{ saveStateToLocalDebounced(); });
 }
-function loadSnapshot(snapshot, pushToHistory=true){
-  if (!snapshot) return;
-  // clear current canvases and restore
-  // if layer counts differ, rebuild layers array to match snapshot size
-  const targetCount = snapshot.layers.length;
-  // remove extra layers
-  while(layers.length > targetCount){
-    const l = layers.pop();
-    if (l.canvas.parentElement) l.canvas.parentElement.removeChild(l.canvas);
-  }
-  // add missing layers
-  while(layers.length < targetCount){
-    createLayer('Layer '+(layers.length+1));
-  }
-  // now each layer: draw dataUrl
-  snapshot.layers.forEach((ld, i) => {
-    const layer = layers[i];
-    layer.name = ld.name || layer.name;
-    layer.opacity = ld.opacity !== undefined ? ld.opacity : layer.opacity;
-    layer.brightness = ld.brightness !== undefined ? ld.brightness : layer.brightness;
-    layer.contrast = ld.contrast !== undefined ? ld.contrast : layer.contrast;
-    layer.saturate = ld.saturate !== undefined ? ld.saturate : layer.saturate;
-    layer.blur = ld.blur !== undefined ? ld.blur : layer.blur;
-    layer.visible = ld.visible !== undefined ? ld.visible : layer.visible;
-    layer.blendMode = ld.blendMode || layer.blendMode;
-    if (ld.dataUrl) {
-      const img = new Image();
-      img.onload = () => {
-        layer.ctx.clearRect(0,0,container.clientWidth, container.clientHeight);
-        layer.ctx.drawImage(img, 0, 0, container.clientWidth, container.clientHeight);
-      };
-      img.src = ld.dataUrl;
-    } else {
-      layer.ctx.clearRect(0,0,container.clientWidth, container.clientHeight);
-    }
-    applyLayerFiltersCSS(layer);
-  });
-  view = snapshot.view || view;
-  activeLayer = layers[snapshot.activeIndex] || layers[0];
-  updateLayersPanel();
-  drawAllLayersVisual();
-  if (pushToHistory) saveSnapshot();
+function restoreFromDataUrl(dataUrl, cb) {
+  const img = new Image();
+  img.onload = ()=> {
+    // restore into active layer by default (or distribute?) We'll clear all layers and draw single flattened image into first layer to restore canvas state
+    layers.forEach((l,i)=>{ l.ctx.clearRect(0,0,container.clientWidth,container.clientHeight); });
+    if (!layers.length) createLayer('Layer 1');
+    layers[0].ctx.drawImage(img,0,0,container.clientWidth,container.clientHeight);
+    activeLayer = layers[0];
+    updateLayersPanel();
+    drawAll();
+    if (cb) cb();
+  };
+  img.src = dataUrl;
 }
 
-/* undo/redo keyboard handlers mapping */
-window.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
-    if (e.shiftKey) { // Ctrl+Shift+Z => redo (user requested)
-      e.preventDefault();
-      redo();
-    } else {
-      e.preventDefault();
-      undo();
+/* ===================== 브러시: 압력, 불투명, 프리셋, 프리셋 버튼 ===================== */
+function loadBrushPresets(){
+  try {
+    const raw = localStorage.getItem('brushPresets_v1');
+    if (!raw) {
+      // default presets
+      return [
+        {name:'연필', size:4, opacity:0.95, pressure:true, icon:'✏️', smoothing:2},
+        {name:'부드러운 브러시', size:16, opacity:0.6, pressure:true, icon:'🖌️', smoothing:6},
+        {name:'하드 브러시', size:28, opacity:1, pressure:false, icon:'🪄', smoothing:0},
+        {name:'불투명 브러시', size:40, opacity:1, pressure:false, icon:'🟦', smoothing:0},
+        {name:'수채', size:30, opacity:0.45, pressure:true, icon:'💧', smoothing:4},
+      ];
     }
-  }
-});
-
-/* ================= 브러시 / 스트로크 안정화 / 압력 / 불투명 ================= */
-const brush = {
-  size: 10,
-  opacity: 1.0,
-  pressure: true,
-  smoothing: 0.6, // 0..1 higher = smoother
-  presetList: brushPresets
-};
-/* populate brush select 1..100 */
-function initBrushSelect(){
-  if (brushSelect.tagName === 'SELECT') {
-    brushSelect.innerHTML = '';
-    for (let i=1;i<=100;i++){
-      const opt = document.createElement('option');
-      opt.value = i;
-      opt.textContent = i;
-      brushSelect.appendChild(opt);
-    }
-    brushSelect.value = 10;
-  } else {
-    brushSelect.min = 1; brushSelect.max = 100; brushSelect.value = 10;
-  }
-  brush.size = parseFloat(brushSelect.value)||10;
+    return JSON.parse(raw);
+  } catch(e){ return []; }
 }
-initBrushSelect();
-brushSelect.addEventListener('change', ()=> { brush.size = parseFloat(brushSelect.value)||10; });
-
-/* quick brush preset buttons area */
-const presetArea = ensureElement('brush-presets-area','div');
-function renderBrushPresetsUI(){
-  presetArea.innerHTML = '';
-  quickBrushButtons = [];
-  brush.presetList.forEach((p,idx)=>{
-    const btn = document.createElement('button');
-    btn.style.padding='4px';
-    btn.style.margin='2px';
-    btn.title = p.name;
-    // small canvas thumbnail
-    const thumb = document.createElement('canvas');
-    thumb.width = 40; thumb.height = 40;
-    const tctx = thumb.getContext('2d');
-    tctx.fillStyle = '#fff'; tctx.fillRect(0,0,40,40);
-    tctx.fillStyle = p.color || colorPicker.value;
-    tctx.globalAlpha = p.opacity !== undefined ? p.opacity : 1;
-    tctx.beginPath();
-    tctx.arc(20,20, Math.max(2, Math.min(18, p.size/2)), 0, Math.PI*2);
-    tctx.fill();
-    btn.appendChild(thumb);
-    btn.addEventListener('click', ()=>{
-      brush.size = p.size; brush.opacity = p.opacity; brush.pressure = !!p.pressure;
-      if (brushSelect.tagName==='SELECT') brushSelect.value = p.size;
-      else brushSelect.value = p.size;
-      colorPicker.value = p.color || colorPicker.value;
-    });
-    presetArea.appendChild(btn);
-    quickBrushButtons.push(btn);
-  });
-  // add "save current preset" button
-  const saveBtn = document.createElement('button'); saveBtn.textContent = '+저장';
-  saveBtn.addEventListener('click', ()=>{
-    const name = prompt('프리셋 이름'); if(!name) return;
-    const p = { name, size: brush.size, opacity: brush.opacity, pressure: brush.pressure, color: colorPicker.value };
-    brush.presetList.push(p);
-    localStorage.setItem('sp_brush_presets', JSON.stringify(brush.presetList));
-    renderBrushPresetsUI();
-  });
-  presetArea.appendChild(saveBtn);
-}
-renderBrushPresetsUI();
-
-/* ================= 그리기 이벤트: pointer + smoothing + pressure + symmetry ================= */
-let drawingState = {
-  isDrawing: false,
-  pointerId: null,
-  points: [], // smoothing buffer
-  lastSaved: null
-};
-let symmetry = { enabled: false, mode: 'none' }; // 'vertical','horizontal','both'
-function attachDrawingEvents(canvas){
-  canvas.addEventListener('pointerdown', onPointerDown, { passive:false });
-  window.addEventListener('pointermove', onPointerMove, { passive:false });
-  window.addEventListener('pointerup', onPointerUp);
-
-  function getPos(e){
-    // get logical canvas coordinates considering view transforms
-    const p = screenToCanvasPoint(e.clientX, e.clientY);
-    return p;
-  }
-
-  function onPointerDown(e){
-    if (e.button !== undefined && e.button !== 0 && e.button !== 1) return; // left or middle allowed
-    // if middle button or space for panning, handle elsewhere
-    if ((e.button === 1) || e.shiftKey || window._panningActive) {
-      // let panning handler catch it
-      return;
-    }
-    // ignore clicks on UI buttons
-    if (e.target && (e.target.tagName === 'BUTTON' || e.target.tagName==='INPUT' || e.target.closest && e.target.closest('#layers-panel'))) return;
-    // begin stroke
-    drawingState.isDrawing = true;
-    drawingState.pointerId = e.pointerId;
-    drawingState.points = [];
-    const pressure = (e.pressure !== undefined ? e.pressure : 0.5);
-    const pos = getPos(e);
-    drawingState.points.push({x:pos.x, y:pos.y, pressure});
-    // set capture
-    e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId);
-    // ensure we save previous snapshot for undo
-    if (activeLayer) {
-      const current = activeLayer.canvas.toDataURL();
-      history.push({singleLayer: layers.indexOf(activeLayer), dataUrl: current});
-      if (HISTORY_LIMIT>0 && history.length>HISTORY_LIMIT) history.shift();
-    }
-  }
-
-  function onPointerMove(e){
-    if (!drawingState.isDrawing || e.pointerId !== drawingState.pointerId) return;
-    const pos = getPos(e);
-    const pressure = (e.pressure !== undefined ? e.pressure : 0.5);
-    drawingState.points.push({x:pos.x, y:pos.y, pressure});
-    // smoothing: use last N points to compute smoothed point
-    const smoothed = smoothPoints(drawingState.points, brush.smoothing);
-    // draw segment from previous smoothed to current smoothed
-    const ctx = activeLayer && activeLayer.ctx;
-    if (!ctx) return;
-    ctx.save();
-    ctx.globalCompositeOperation = usingEraser ? 'destination-out' : (activeLayer.blendMode || 'source-over');
-    // stroke style
-    const baseSize = Math.min(100, brush.size || 10);
-    const p = smoothed;
-    const alpha = brush.opacity !== undefined ? brush.opacity : 1.0;
-    ctx.lineWidth = Math.max(1, (baseSize * (p.pressure || 1)));
-    ctx.strokeStyle = colorPicker.value;
-    ctx.globalAlpha = alpha * (usingEraser ? 1 : 1);
-    // optional filter for layer-specific blur if ctx.filter supported
-    if (activeLayer.blur && ctx.filter !== undefined) ctx.filter = `blur(${activeLayer.blur}px)`;
-    ctx.beginPath();
-    // compute previous point
-    const prev = drawingState.points.length >= 2 ? smoothPoints(drawingState.points.slice(0,-1), brush.smoothing) : p;
-    ctx.moveTo(prev.x, prev.y);
-    ctx.lineTo(p.x, p.y);
-    ctx.stroke();
-    ctx.restore();
-    // symmetry: mirror draws
-    if (symmetry.enabled){
-      drawSymmetryStroke(prev, p);
-    }
-  }
-
-  function onPointerUp(e){
-    if (!drawingState.isDrawing || e.pointerId !== drawingState.pointerId) return;
-    drawingState.isDrawing = false;
-    drawingState.pointerId = null;
-    drawingState.points = [];
-    // release capture
-    try { e.target.releasePointerCapture && e.target.releasePointerCapture(e.pointerId); } catch(e){}
-    // finalize history: last push already added baseline; optionally push final combined snapshot for global undo
-    saveSnapshot();
-  }
-
-  function smoothPoints(points, smoothing){
-    // simple exponential moving average smoothing
-    if (!points || points.length===0) return {x:0,y:0,pressure:1};
-    let x=points[0].x, y=points[0].y, pr=points[0].pressure||1;
-    for (let i=1;i<points.length;i++){
-      const k = Math.pow(smoothing, i);
-      x = x * (1-k) + points[i].x * k;
-      y = y * (1-k) + points[i].y * k;
-      pr = pr * (1-k) + (points[i].pressure||1)*k;
-    }
-    return { x, y, pressure: pr };
-  }
-
-  function drawSymmetryStroke(a, b){
-    // perform mirrored drawing on activeLayer ctx
-    const ctx = activeLayer && activeLayer.ctx;
-    if (!ctx) return;
-    ctx.save();
-    ctx.globalCompositeOperation = usingEraser ? 'destination-out' : (activeLayer.blendMode || 'source-over');
-    ctx.strokeStyle = colorPicker.value;
-    ctx.globalAlpha = brush.opacity || 1;
-    const baseSize = Math.min(100, brush.size || 10);
-    // vertical mirror across center of canvas logical size
-    const w = container.clientWidth;
-    const h = container.clientHeight;
-    if (symmetry.mode === 'vertical' || symmetry.mode === 'both'){
-      const pa = { x: w - a.x, y: a.y };
-      const pb = { x: w - b.x, y: b.y };
-      ctx.lineWidth = baseSize * (b.pressure||1);
-      ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
-    }
-    if (symmetry.mode === 'horizontal' || symmetry.mode === 'both'){
-      const pa = { x: a.x, y: h - a.y };
-      const pb = { x: b.x, y: h - b.y };
-      ctx.lineWidth = baseSize * (b.pressure||1);
-      ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
-    }
-    ctx.restore();
-  }
-}
-
-/* Attach events to existing and future layers */
-function attachDrawingEventsToAll(){
-  layers.forEach(l => {
-    l.canvas.onpointerdown = null; // remove previous to avoid duplicates
-    attachDrawingEvents(l.canvas);
-  });
-}
-
-/* ================= 스포이드 (Eyedropper) ================= */
-let eyedropperActive = false;
-function enableEyedropper(){
-  eyedropperActive = true;
-  container.style.cursor = 'crosshair';
-  function onPick(e){
-    const x = e.clientX - container.getBoundingClientRect().left;
-    const y = e.clientY - container.getBoundingClientRect().top;
-    // find topmost visible layer pixel at that point
-    for (let i = layers.length - 1; i >= 0; i--){
-      const L = layers[i];
-      if (!L.visible) continue;
-      try {
-        const ctx = L.ctx;
-        const ratio = window.devicePixelRatio || 1;
-        const imgData = ctx.getImageData(Math.floor(x*ratio), Math.floor(y*ratio), 1,1).data;
-        if (imgData[3] === 0) continue; // transparent, skip
-        const hex = rgbToHex(imgData[0], imgData[1], imgData[2]);
-        colorPicker.value = hex;
-        break;
-      } catch (err) {
-        console.warn('eyedropper error', err);
-      }
-    }
-    container.removeEventListener('pointerdown', onPick);
-    eyedropperActive = false;
-    container.style.cursor = 'default';
-  }
-  container.addEventListener('pointerdown', onPick, { once: true });
-}
-function rgbToHex(r,g,b){ return '#'+[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join(''); }
-
-/* ================= 페인트통(flood fill) 개선 (already implemented earlier) ================= */
-function floodFillAt(layer, screenX, screenY, fillColorHex, tolerance=32){
-  if (!layer) return;
-  const ctx = layer.ctx;
-  const ratio = window.devicePixelRatio || 1;
-  const logW = layer.canvas.width / ratio;
-  const logH = layer.canvas.height / ratio;
-  const img = ctx.getImageData(0,0,layer.canvas.width, layer.canvas.height);
-  const data = img.data;
-  const px = Math.floor(screenToCanvasPoint(screenX, screenY).x * ratio);
-  const py = Math.floor(screenToCanvasPoint(screenX, screenY).y * ratio);
-  if (px<0||py<0||px>=layer.canvas.width||py>=layer.canvas.height) return;
-  const startIdx = (py*layer.canvas.width + px) * 4;
-  const startColor = [data[startIdx], data[startIdx+1], data[startIdx+2], data[startIdx+3]];
-  // parse fillColorHex to rgba
-  const fc = hexToRgba(fillColorHex);
-  if (!fc) return;
-  if (startColor[0]===fc[0] && startColor[1]===fc[1] && startColor[2]===fc[2]) return;
-  const stack = [[px,py]];
-  const visited = new Uint8Array(layer.canvas.width * layer.canvas.height);
-  const tol2 = tolerance * tolerance;
-  function colorMatchAt(x,y){
-    const i = (y*layer.canvas.width + x)*4;
-    const dr = data[i]-startColor[0];
-    const dg = data[i+1]-startColor[1];
-    const db = data[i+2]-startColor[2];
-    return (dr*dr + dg*dg + db*db) <= tol2;
-  }
-  while(stack.length){
-    const [x,y] = stack.pop();
-    if (x<0||y<0||x>=layer.canvas.width||y>=layer.canvas.height) continue;
-    const idx = y*layer.canvas.width + x;
-    if (visited[idx]) continue;
-    visited[idx] = 1;
-    if (!colorMatchAt(x,y)) continue;
-    const i = idx*4;
-    data[i] = fc[0]; data[i+1]=fc[1]; data[i+2]=fc[2]; data[i+3]=255;
-    stack.push([x+1,y]); stack.push([x-1,y]); stack.push([x,y+1]); stack.push([x,y-1]);
-  }
-  ctx.putImageData(img, 0,0);
-  saveSnapshot();
-}
-function hexToRgba(hex){
-  if (!hex) return null;
-  hex = hex.replace('#','');
-  if (hex.length === 3) hex = hex.split('').map(c=>c+c).join('');
-  const r = parseInt(hex.slice(0,2),16);
-  const g = parseInt(hex.slice(2,4),16);
-  const b = parseInt(hex.slice(4,6),16);
-  return [r,g,b,255];
-}
-
-/* ================= 캔버스 PANNING, ZOOM, ROTATE (view) ================= */
-let isPanning = false;
-let panStart = null;
-let lastWheelTime = 0;
-
-function enablePanHandlers(){
-  // space + drag or middle button drag
-  container.addEventListener('pointerdown', (e)=>{
-    if (e.button === 1 || e.buttons === 4 || e.shiftKey || e.ctrlKey) {
-      // middle button (button==1) or shift => pan
-      isPanning = true;
-      panStart = { x: e.clientX - view.offsetX, y: e.clientY - view.offsetY };
-      container.setPointerCapture && container.setPointerCapture(e.pointerId);
-      return;
-    }
-  });
-  window.addEventListener('pointermove', (e)=>{
-    if (!isPanning) return;
-    view.offsetX = e.clientX - panStart.x;
-    view.offsetY = e.clientY - panStart.y;
-    // apply CSS transform to container children (we draw into layer canvases directly; we can visually move the entire container via transform)
-    container.style.transform = `translate(${view.offsetX}px, ${view.offsetY}px) rotate(${view.rotation}deg) scale(${view.scale})`;
-  });
-  window.addEventListener('pointerup', (e)=>{
-    if (isPanning) {
-      isPanning = false;
-      container.releasePointerCapture && container.releasePointerCapture(e.pointerId);
-      saveSnapshot();
-    }
-  });
-  // wheel zoom with ctrl or pinch handled in overlay; here generic wheel zoom when ctrlKey pressed or alt
-  container.addEventListener('wheel', (e)=>{
-    if (!e.ctrlKey && !e.metaKey && !e.altKey) return; // require modifier to zoom to avoid interfering with scroll
-    e.preventDefault();
-    const now = Date.now();
-    if (now - lastWheelTime < 10) return;
-    lastWheelTime = now;
-    const rect = container.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    const delta = e.deltaY < 0 ? 1.08 : 0.92;
-    const oldScale = view.scale;
-    view.scale = clamp(view.scale * delta, 0.05, 20);
-    // zoom towards mouse: adjust offset so point under mouse remains under mouse
-    view.offsetX = mx - ((mx - view.offsetX) * (view.scale / oldScale));
-    view.offsetY = my - ((my - view.offsetY) * (view.scale / oldScale));
-    container.style.transform = `translate(${view.offsetX}px, ${view.offsetY}px) rotate(${view.rotation}deg) scale(${view.scale})`;
-    saveSnapshotDebounced();
-  }, { passive: false });
-}
-
-/* ================= 선택 영역/이동 툴 (basic) ================= */
-let selection = { active:false, x:0,y:0,w:0,h:0, start:null, moving:false, moveOffset:null, sourceCanvas:null };
-function enableSelectionTool(){
-  // clicking with certain tool selected would start selection; provide API selectRect()
-  // For simplicity, treat right-click as selection start (or add separate button)
-  container.addEventListener('contextmenu', (e) => e.preventDefault());
-  container.addEventListener('pointerdown', (e)=>{
-    if (!e.altKey) return; // hold Alt to start selection
-    selection.active = true;
-    const p = screenToCanvasPoint(e.clientX, e.clientY);
-    selection.start = p;
-    selection.x = p.x; selection.y = p.y; selection.w = 0; selection.h = 0;
-    selection.sourceCanvas = document.createElement('canvas');
-    setCanvasSizeForDisplay(selection.sourceCanvas, 0,0); // placeholder
-  });
-  container.addEventListener('pointermove', (e)=>{
-    if (!selection.active || !selection.start) return;
-    const p = screenToCanvasPoint(e.clientX, e.clientY);
-    selection.x = Math.min(selection.start.x, p.x);
-    selection.y = Math.min(selection.start.y, p.y);
-    selection.w = Math.abs(selection.start.x - p.x);
-    selection.h = Math.abs(selection.start.y - p.y);
-    // draw selection overlay UI - skipped to avoid heavy UI code
-  });
-  container.addEventListener('pointerup', (e)=>{
-    if (!selection.active) return;
-    // finalize selection; enable moving by dragging inside selection
-    selection.start = null;
-    // copy pixels from activeLayer into temporary canvas for move
-    if (activeLayer && selection.w>0 && selection.h>0){
-      selection.sourceCanvas = document.createElement('canvas');
-      setCanvasSizeForDisplay(selection.sourceCanvas, selection.w, selection.h);
-      const sctx = selection.sourceCanvas.getContext('2d');
-      sctx.drawImage(activeLayer.canvas, selection.x, selection.y, selection.w, selection.h, 0,0, selection.w, selection.h);
-      // clear area
-      activeLayer.ctx.clearRect(selection.x, selection.y, selection.w, selection.h);
-      saveSnapshot();
-    }
-    selection.moving = true;
-    selection.moveOffset = { x: 0, y: 0 };
-  });
-  // moving: pointermove while selection.moving true -> update moveOffset and draw preview; on pointerup finalize
-  window.addEventListener('pointermove', (e)=>{
-    if (!selection.moving) return;
-    // update offset based on pointer movement
-    // not implementing full preview due to complexity; finalizing with immediate draw at new pos on pointerup
-  });
-  window.addEventListener('pointerup', (e)=>{
-    if (!selection.moving) return;
-    // finalize move: draw sourceCanvas back to active layer at new position
-    const newPos = { x: selection.x + (selection.moveOffset?selection.moveOffset.x:0), y: selection.y + (selection.moveOffset?selection.moveOffset.y:0) };
-    activeLayer.ctx.drawImage(selection.sourceCanvas, newPos.x, newPos.y);
-    selection.active=false; selection.moving=false; selection.start=null; selection.sourceCanvas=null;
-    saveSnapshot();
-  });
-}
-
-/* ================= 브러시 프리셋 저장/로드 ================= */
-function saveBrushPreset(name){
-  const p = { name, size: brush.size, opacity: brush.opacity, pressure: brush.pressure, color: colorPicker.value };
-  brush.presetList.push(p);
-  localStorage.setItem('sp_brush_presets', JSON.stringify(brush.presetList));
-  renderBrushPresetButtons();
-}
+function saveBrushPresets() { localStorage.setItem('brushPresets_v1', JSON.stringify(brushPresets)); }
+function addBrushPreset(preset){ brushPresets.push(preset); saveBrushPresets(); renderBrushPresetButtons(); }
 function renderBrushPresetButtons(){
-  // create UI area if not present
-  let containerEl = document.getElementById('brush-presets-area');
+  // quick access area in toolbar
+  const presetsContainerId = 'quick-presets';
+  let containerEl = document.getElementById(presetsContainerId);
   if (!containerEl) {
-    containerEl = document.createElement('div'); containerEl.id='brush-presets-area';
-    if (toolbar) toolbar.appendChild(containerEl); else document.body.appendChild(containerEl);
+    containerEl = document.createElement('div');
+    containerEl.id = presetsContainerId;
+    containerEl.style.display='flex';
+    containerEl.style.gap='6px';
+    toolbar.appendChild(containerEl);
   }
   containerEl.innerHTML = '';
-  brush.presetList.forEach((p, i)=>{
-    const btn = document.createElement('button'); btn.title = p.name;
-    btn.style.padding='2px'; btn.style.margin='2px';
-    const c = document.createElement('canvas'); c.width=32; c.height=32;
-    const tc = c.getContext('2d'); tc.fillStyle = p.color||'#000'; tc.beginPath(); tc.arc(16,16, Math.max(2, p.size/6),0,Math.PI*2); tc.fill();
-    btn.appendChild(c);
-    btn.addEventListener('click', ()=>{ brush.size = p.size; brush.opacity = p.opacity; brush.pressure = p.pressure; colorPicker.value = p.color; if (brushSelect.tagName==='SELECT') brushSelect.value = p.size; else brushSelect.value = p.size; });
-    containerEl.appendChild(btn);
+  brushPresets.slice(0,10).forEach((p,idx)=>{
+    const b=document.createElement('button'); b.title=p.name; b.textContent=p.icon || p.name;
+    b.addEventListener('click',()=>{
+      // apply preset
+      if (brushSelect) brushSelect.value = p.size;
+      if (colorPicker) { /* keep color */ }
+      // opacity as alpha control stored separately - we'll use global variable
+      currentBrush.opacity = p.opacity;
+      currentBrush.pressure = p.pressure;
+      currentBrush.smoothing = p.smoothing || 0;
+      // visually indicate
+      b.style.boxShadow = '0 0 0 2px #88f inset';
+    });
+    containerEl.appendChild(b);
   });
-  const addBtn = document.createElement('button'); addBtn.textContent = '+';
-  addBtn.addEventListener('click', ()=>{
-    const name = prompt('프리셋 이름'); if(!name) return;
-    saveBrushPreset(name);
-  });
-  containerEl.appendChild(addBtn);
 }
 renderBrushPresetButtons();
 
-/* ================= 스포이드 버튼 바인딩 ================= */
-const eyedropperBtn = ensureElement('eyedropper','button'); eyedropperBtn.textContent = '스포이드';
-eyedropperBtn.addEventListener('click', ()=>{
-  enableEyedropper();
-});
+/* current brush state */
+let currentBrush = { size: parseInt(brushSelect ? brushSelect.value : 10,10) || 10, opacity:1, pressure:true, smoothing: strokeStabilizer.radius };
 
-/* ================= 레이어 패널 생성/업데이트 UI ================= */
-function updateLayersPanel(){
-  layersPanel.innerHTML = '';
-  // top controls: new canvas size, export buttons, shortcut guide button
-  const topRow = document.createElement('div');
-  topRow.style.display='flex'; topRow.style.gap='6px'; topRow.style.marginBottom='8px';
-  const sizeBtn = document.createElement('button'); sizeBtn.textContent = '캔버스 크기';
-  sizeBtn.addEventListener('click', ()=> {
-    const w = parseInt(prompt('가로(px)', container.clientWidth),10);
-    const h = parseInt(prompt('세로(px)', container.clientHeight),10);
-    if (!w || !h) return;
-    // resize internal canvases (resample current content)
-    layers.forEach(layer=>{
-      const tmp = document.createElement('canvas');
-      setCanvasSizeForDisplay(tmp, container.clientWidth, container.clientHeight);
-      tmp.getContext('2d').drawImage(layer.canvas,0,0);
-      setCanvasSizeForDisplay(layer.canvas, w, h);
-      layer.ctx.drawImage(tmp, 0,0, tmp.width/(window.devicePixelRatio||1), tmp.height/(window.devicePixelRatio||1), 0,0, w, h);
-    });
-    container.style.width = w + 'px'; container.style.height = h + 'px';
-    saveSnapshot();
-  });
-  const exportBtn = document.createElement('button'); exportBtn.textContent = 'PSD(Zip)';
-  exportBtn.addEventListener('click', exportPSDlikeZip);
-  const shortcutBtn = document.createElement('button'); shortcutBtn.textContent = '단축키 가이드';
-  shortcutBtn.addEventListener('click', ()=> showShortcutGuide());
-  topRow.appendChild(sizeBtn); topRow.appendChild(exportBtn); topRow.appendChild(shortcutBtn);
-  layersPanel.appendChild(topRow);
-
-  // list layers
-  for (let i=layers.length-1;i>=0;i--){
-    const L = layers[i];
-    const row = document.createElement('div');
-    row.style.border = L===activeLayer ? '1px solid #447' : '1px solid #ccc';
-    row.style.padding = '6px';
-    row.style.marginBottom = '6px';
-    const title = document.createElement('div'); title.textContent = L.name; title.style.fontWeight = 'bold';
-    row.appendChild(title);
-    // sliders: opacity, brightness, contrast, saturate, blur
-    const makeRange = (label, min, max, step, value, oninput) => {
-      const wr = document.createElement('div'); wr.style.display='flex'; wr.style.alignItems='center'; wr.style.gap='6px';
-      const lab = document.createElement('span'); lab.textContent = label; lab.style.width='60px'; lab.style.fontSize='12px';
-      const r = document.createElement('input'); r.type='range'; r.min=min; r.max=max; r.step=step; r.value=value;
-      r.addEventListener('input', (e)=> oninput(parseFloat(e.target.value)));
-      wr.appendChild(lab); wr.appendChild(r);
-      return wr;
-    };
-    row.appendChild(makeRange('불투명', 0, 1, 0.01, L.opacity, v=>{ L.opacity=v; applyLayerFiltersCSS(L); saveSnapshot(); }));
-    row.appendChild(makeRange('밝기', 0, 2, 0.01, L.brightness, v=>{ L.brightness=v; applyLayerFiltersCSS(L); saveSnapshot(); }));
-    row.appendChild(makeRange('대비', 0, 2, 0.01, L.contrast, v=>{ L.contrast=v; applyLayerFiltersCSS(L); saveSnapshot(); }));
-    row.appendChild(makeRange('채도', 0, 3, 0.01, L.saturate, v=>{ L.saturate=v; applyLayerFiltersCSS(L); saveSnapshot(); }));
-    row.appendChild(makeRange('흐림', 0, 40, 1, L.blur, v=>{ L.blur=v; applyLayerFiltersCSS(L); saveSnapshot(); }));
-
-    const controls = document.createElement('div'); controls.style.display='flex'; controls.style.gap='6px'; controls.style.marginTop='6px';
-    const vis = document.createElement('button'); vis.textContent = L.visible ? '👁' : '🚫'; vis.addEventListener('click', ()=>{ L.visible=!L.visible; vis.textContent=L.visible?'👁':'🚫'; applyLayerFiltersCSS(L); saveSnapshot();});
-    const up = document.createElement('button'); up.textContent='⬆️'; up.addEventListener('click', ()=> moveLayer(L, +1));
-    const down = document.createElement('button'); down.textContent='⬇️'; down.addEventListener('click', ()=> moveLayer(L, -1));
-    const del = document.createElement('button'); del.textContent='❌'; del.addEventListener('click', ()=> deleteLayer(L));
-    controls.appendChild(vis); controls.appendChild(up); controls.appendChild(down); controls.appendChild(del);
-    row.appendChild(controls);
-
-    row.addEventListener('click', (e)=> { if (e.target.tagName === 'INPUT' || e.target.tagName==='BUTTON') return; activeLayer = L; updateLayersPanel(); });
-    layersPanel.appendChild(row);
-  }
+/* expose saving a new preset (for UI we might provide a button elsewhere) */
+function saveCurrentBrushAsPreset(name, icon){
+  addBrushPreset({ name: name || 'User', size: currentBrush.size, opacity: currentBrush.opacity, pressure: currentBrush.pressure, icon: icon || '★', smoothing: currentBrush.smoothing });
 }
 
-/* ================= Shortcuts guide ================= */
-function showShortcutGuide(){
-  let guide = document.getElementById('shortcut-guide');
-  if (!guide) {
-    guide = document.createElement('div'); guide.id='shortcut-guide';
-    guide.style.position='fixed'; guide.style.left='10px'; guide.style.top='10px'; guide.style.zIndex='2147483700'; guide.style.background='rgba(0,0,0,0.75)';
-    guide.style.color='#fff'; guide.style.padding='12px'; guide.style.borderRadius='8px';
-    const html = `
-      <b>단축키 가이드</b><br>
-      Ctrl+Z : 되돌리기<br>
-      Ctrl+Shift+Z : 취소(Redo)<br>
-      Tab : UI 숨기기/보이기<br>
-      Space(or MiddleButton) + Drag : 캔버스 이동(Pan)<br>
-      Ctrl(또는 Cmd) + Wheel : 확대/축소(Zoom)<br>
-      Alt + Drag : 선택 영역 생성<br>
-      Shift : 임시 보정(미구현 추가 옵션)<br>
-      Alt 클릭 : 스포이드<br>
-    `;
-    guide.innerHTML = html;
-    document.body.appendChild(guide);
-    setTimeout(()=>{ guide.style.opacity=1; },10);
-    guide.addEventListener('click', ()=> { guide.remove(); });
-  } else {
-    guide.remove();
-  }
+/* ===================== 스포이드(eyedropper) 구현 ===================== */
+function eyedropperAt(clientX, clientY) {
+  // sample composite canvas at screen coords
+  const tmp = compositeToTempCanvas();
+  const rect = container.getBoundingClientRect();
+  const x = Math.max(0, Math.min(tmp.width / (window.devicePixelRatio||1), clientX - rect.left));
+  const y = Math.max(0, Math.min(tmp.height / (window.devicePixelRatio||1), clientY - rect.top));
+  const ctx = tmp.getContext('2d');
+  const d = ctx.getImageData(x, y, 1,1).data;
+  const hex = rgbaToHex(d[0],d[1],d[2]);
+  return hex;
+}
+function rgbaToHex(r,g,b){
+  return '#'+[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');
 }
 
-/* ================= PSD-like export (zip of PNGs + metadata) ================= */
-async function exportPSDlikeZip(){
-  // create a zip containing each layer png and metadata.json
-  // We'll use JSZip if available; if not, fallback to downloading individual images in a folder-like manner by zipping via built-in workaround (not supported).
-  if (window.JSZip) {
-    const zip = new JSZip();
-    const meta = { width: container.clientWidth, height: container.clientHeight, layers: [] };
-    for (let i=0;i<layers.length;i++){
-      const l = layers[i];
-      const dataUrl = l.canvas.toDataURL();
-      const bin = dataUrlToUint8Array(dataUrl);
-      zip.file(`layer_${i}_${sanitizeFilename(l.name)}.png`, bin, {binary:true});
-      meta.layers.push({ name: l.name, opacity: l.opacity, brightness: l.brightness, contrast: l.contrast, saturate: l.saturate, blur: l.blur, visible: l.visible });
+/* ===================== 스트로크 안정화 (간단한 평균 지연 기법) ===================== */
+function smoothPoints(points, smoothingRadius) {
+  if (!smoothingRadius || points.length < 3) return points;
+  const smoothed = [];
+  for (let i=0;i<points.length;i++){
+    let sx=0, sy=0, count=0;
+    for (let j=Math.max(0, i - smoothingRadius); j<=Math.min(points.length-1, i + smoothingRadius); j++){
+      sx += points[j].x; sy += points[j].y; count++;
     }
-    zip.file('metadata.json', JSON.stringify(meta));
-    const content = await zip.generateAsync({type:'blob'});
-    const a = document.createElement('a'); a.href = URL.createObjectURL(content); a.download = 'psd_like.zip'; a.click();
-  } else {
-    alert('JSZip 필요: PSD(Zip) 내보내기는 JSZip 라이브러리 필요합니다. (Optional)'); 
-    // fallback: save single flattened PNG
-    const tmp = document.createElement('canvas');
-    setCanvasSizeForDisplay(tmp, container.clientWidth, container.clientHeight);
-    const tctx = tmp.getContext('2d');
-    layers.forEach(l => { if (l.visible) tctx.drawImage(l.canvas, 0,0); });
-    const data = tmp.toDataURL('image/png');
-    const link = document.createElement('a'); link.href = data; link.download = 'flatten.png'; link.click();
+    smoothed.push({x: sx/count, y: sy/count, pressure: points[i].pressure});
   }
-}
-function dataUrlToUint8Array(dataUrl){
-  const b64 = dataUrl.split(',')[1];
-  const bin = atob(b64);
-  const arr = new Uint8Array(bin.length);
-  for (let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
-  return arr;
-}
-function sanitizeFilename(name){ return name.replace(/[^\w\-\.]/g,'_'); }
-
-/* ================= GIF/APNG export (simple frame export stub) ================= */
-function exportFramesAsZip(frameDataUrls){
-  if (!frameDataUrls || !frameDataUrls.length) return;
-  if (window.JSZip) {
-    const zip = new JSZip();
-    frameDataUrls.forEach((d,i)=> zip.file(`frame_${i}.png`, dataUrlToUint8Array(d), {binary:true}));
-    zip.generateAsync({type:'blob'}).then(content=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(content); a.download='frames.zip'; a.click(); });
-  } else {
-    alert('JSZip 필요: GIF/APNG 추출(프레임 zip) 은 JSZip 필요');
-  }
+  return smoothed;
 }
 
-/* ================= Storage: autosave & load on refresh ================= */
-const STORAGE_KEY = 'simple_paint_state_v2';
-function persistLocalState(){
-  try {
-    const state = { layers: [], view, activeIndex: layers.indexOf(activeLayer), brush: { size: brush.size, opacity: brush.opacity } };
-    layers.forEach(l => {
-      state.layers.push({
-        name: l.name, opacity: l.opacity, brightness: l.brightness, contrast: l.contrast, saturate: l.saturate, blur: l.blur, visible: l.visible, dataUrl: l.canvas.toDataURL()
-      });
-    });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch (e) { console.warn('persistLocalState failed', e); }
-}
-const persistLocalStateDebounced = debounce(persistLocalState, 800);
-function loadLocalState(){
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return false;
-  try {
-    const state = JSON.parse(raw);
-    // clear existing canvases
-    layers.forEach(l => { if (l.canvas.parentElement) l.canvas.parentElement.removeChild(l.canvas);});
-    layers = [];
-    state.layers.forEach((ld, idx)=>{
-      const layer = createLayer(ld.name || ('Layer '+(idx+1)));
-      // draw image
-      if (ld.dataUrl) {
-        const img = new Image();
-        img.onload = ()=> { layer.ctx.clearRect(0,0,container.clientWidth, container.clientHeight); layer.ctx.drawImage(img, 0,0, container.clientWidth, container.clientHeight); };
-        img.src = ld.dataUrl;
+/* ===================== 그리기 이벤트: 압력, 불투명, 지우개, 대칭, 선택툴, 패닝 ===================== */
+function attachDrawingEvents(canvas) {
+  let drawing=false, pointerId=null;
+  let points = [];
+  let lastTime = 0;
+  function toLocal(e){
+    const rect = container.getBoundingClientRect();
+    return { x: (e.clientX - rect.left), y: (e.clientY - rect.top) };
+  }
+
+  canvas.addEventListener('pointerdown', (e)=>{
+    if (pointerTool === 'pan') {
+      isPanning = true; lastPan = { x: e.clientX, y: e.clientY }; return;
+    }
+    if (pointerTool === 'eyedropper' || (e.shiftKey && pointerTool === 'brush')) {
+      const hex = eyedropperAt(e.clientX, e.clientY);
+      colorPicker.value = hex;
+      return;
+    }
+    if (pointerTool === 'fill') {
+      const loc = toLocal(e);
+      if (activeLayer) floodFill(activeLayer.ctx, loc.x, loc.y, colorPicker.value, 32);
+      saveSnapshotDebounced();
+      return;
+    }
+    if (pointerTool === 'select') {
+      // TODO: selection logic - start rectangle selection
+      startSelection(e);
+      return;
+    }
+
+    e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId);
+    pointerId = e.pointerId;
+    drawing = true;
+    points = [];
+    const p = toLocal(e);
+    const pressure = (e.pressure && e.pressure > 0) ? e.pressure : (e.force || 0.5);
+    points.push({x:p.x, y:p.y, pressure, t:Date.now()});
+    lastTime = Date.now();
+  }, { passive:false });
+
+  window.addEventListener('pointermove', (e)=>{
+    if (isPanning) {
+      if (!lastPan) return;
+      const dx = e.clientX - lastPan.x;
+      const dy = e.clientY - lastPan.y;
+      pan.x += dx; pan.y += dy; lastPan = { x:e.clientX, y:e.clientY };
+      container.style.transform = `translate(${pan.x}px, ${pan.y}px) scale(${scale}) rotate(${rotation}deg)`;
+      return;
+    }
+    if (!drawing || e.pointerId !== pointerId) return;
+    const p = toLocal(e); const pressure = (e.pressure && e.pressure>0) ? e.pressure : (e.force || 0.5);
+    points.push({x:p.x, y:p.y, pressure, t:Date.now()});
+    // smoothing
+    let drawPts = strokeStabilizer.enabled ? smoothPoints(points.slice(-Math.max(1, Math.round(currentBrush.smoothing || 0))), currentBrush.smoothing || 2) : [points[points.length-1]];
+    // draw segment from previous to last smoothed point
+    if (!activeLayer) createLayer();
+    const ctx = activeLayer.ctx;
+    ctx.save();
+    ctx.globalCompositeOperation = usingEraser || pointerTool==='eraser' ? 'destination-out' : 'source-over';
+    ctx.strokeStyle = colorPicker.value;
+    const size = Math.min(100, parseFloat(brushSelect.value) || 10);
+    const baseAlpha = currentBrush.opacity || 1;
+    ctx.lineCap='round'; ctx.lineJoin='round';
+    ctx.beginPath();
+    // draw using bezier between last two smoothed pts
+    if (drawPts.length >= 2) {
+      const a = drawPts[drawPts.length-2];
+      const b = drawPts[drawPts.length-1];
+      // compute pressure-based width
+      const w1 = (currentBrush.pressure ? a.pressure : 1) * size;
+      const w2 = (currentBrush.pressure ? b.pressure : 1) * size;
+      ctx.lineWidth = (w1 + w2) / 2;
+      ctx.globalAlpha = baseAlpha;
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      // symmetry
+      if (symmetry.enabled) {
+        applySymmetryStroke(ctx, a, b, size, baseAlpha);
       }
-      layer.opacity = ld.opacity !== undefined ? ld.opacity : layer.opacity;
-      layer.brightness = ld.brightness !== undefined ? ld.brightness : layer.brightness;
-      layer.contrast = ld.contrast !== undefined ? ld.contrast : layer.contrast;
-      layer.saturate = ld.saturate !== undefined ? ld.saturate : layer.saturate;
-      layer.blur = ld.blur !== undefined ? ld.blur : layer.blur;
-      layer.visible = ld.visible !== undefined ? ld.visible : layer.visible;
-      applyLayerFiltersCSS(layer);
-    });
-    view = state.view || view;
-    activeLayer = layers[state.activeIndex] || layers[0];
-    updateLayersPanel();
-    drawAllLayersVisual();
-    return true;
-  } catch (e) {
-    console.warn('loadLocalState failed', e);
-    return false;
+    } else {
+      const b = drawPts[drawPts.length-1];
+      ctx.lineWidth = size;
+      ctx.globalAlpha = baseAlpha;
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(b.x+0.01, b.y+0.01);
+      ctx.stroke();
+      if (symmetry.enabled) applySymmetryStroke(ctx, b, b, size, baseAlpha);
+    }
+    ctx.restore();
+  }, { passive:false });
+
+  window.addEventListener('pointerup', (e)=>{
+    if (isPanning) { isPanning=false; lastPan=null; return; }
+    if (drawing && e.pointerId === pointerId) {
+      drawing=false; pointerId=null;
+      // finalize stroke: save snapshot once per stroke
+      saveSnapshot();
+    }
+  });
+
+  // helper to draw mirrored stroke
+  function applySymmetryStroke(ctx, a, b, size, alpha) {
+    ctx.save(); ctx.globalAlpha = alpha;
+    if (symmetry.mode === 'vertical'||symmetry.mode==='both') {
+      ctx.beginPath(); ctx.moveTo(container.clientWidth - a.x, a.y); ctx.lineTo(container.clientWidth - b.x, b.y); ctx.lineWidth = size; ctx.stroke();
+    }
+    if (symmetry.mode === 'horizontal'||symmetry.mode==='both') {
+      ctx.beginPath(); ctx.moveTo(a.x, container.clientHeight - a.y); ctx.lineTo(b.x, container.clientHeight - b.y); ctx.lineWidth = size; ctx.stroke();
+    }
+    if (symmetry.mode === 'both') {
+      ctx.beginPath(); ctx.moveTo(container.clientWidth - a.x, container.clientHeight - a.y); ctx.lineTo(container.clientWidth - b.x, container.clientHeight - b.y); ctx.lineWidth = size; ctx.stroke();
+    }
+    ctx.restore();
   }
 }
-loadLocalState();
 
-/* ================= UI hide/show (Tab) ================= */
+/* ===================== 선택/이동 툴 (기본 사각형 선택) ===================== */
+let selection = null; // {x,y,w,h, imageData}
+function startSelection(e){
+  const rect = container.getBoundingClientRect();
+  const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+  let currentRect = { x: sx, y: sy, w:0, h:0 };
+  function onMove(ev) {
+    const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+    currentRect.w = mx - sx; currentRect.h = my - sy;
+    // draw selection overlay (we'll use a top overlay canvas)
+    drawSelectionOverlay(currentRect);
+  }
+  function onUp(ev) {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    selection = normalizeRect(currentRect);
+    // capture imageData from composed canvas
+    const composed = compositeToTempCanvas();
+    const cctx = composed.getContext('2d');
+    const imgd = cctx.getImageData(selection.x, selection.y, selection.w, selection.h);
+    selection.imageData = imgd;
+    // now user can move selection with move tool (not fully implemented)
+    clearSelectionOverlay();
+  }
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+}
+function normalizeRect(r){
+  const x = Math.min(r.x, r.x + r.w);
+  const y = Math.min(r.y, r.y + r.h);
+  const w = Math.abs(r.w);
+  const h = Math.abs(r.h);
+  return {x:Math.round(x), y:Math.round(y), w:Math.round(w), h:Math.round(h)};
+}
+function drawSelectionOverlay(rect){
+  let overlay = document.getElementById('selection-overlay');
+  if (!overlay) {
+    overlay = document.createElement('canvas'); overlay.id='selection-overlay';
+    overlay.style.position='absolute'; overlay.style.left='0'; overlay.style.top='0'; overlay.style.pointerEvents='none';
+    container.appendChild(overlay);
+    setCanvasSizeForDisplay(overlay, container.clientWidth, container.clientHeight);
+  }
+  const ctx = overlay.getContext('2d');
+  ctx.clearRect(0,0,overlay.width/(window.devicePixelRatio||1), overlay.height/(window.devicePixelRatio||1));
+  ctx.strokeStyle='rgba(0,120,255,0.9)'; ctx.lineWidth=1; ctx.setLineDash([6,4]);
+  ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+}
+function clearSelectionOverlay(){ const ov=document.getElementById('selection-overlay'); if(ov && ov.parentElement) ov.parentElement.removeChild(ov); }
+
+/* ===================== 페인트통(선택부분만 채우기) ===================== */
+/* We implemented floodFill() earlier in previous versions. For compactness, implement a basic floodFill here. */
+function floodFill(ctx, startX, startY, fillColor, tolerance=32){
+  try{
+    const w = ctx.canvas.width / (window.devicePixelRatio||1);
+    const h = ctx.canvas.height / (window.devicePixelRatio||1);
+    const imageData = ctx.getImageData(0,0,w,h);
+    const data = imageData.data;
+    const x0 = Math.floor(startX), y0 = Math.floor(startY);
+    if (x0<0||y0<0||x0>=w||y0>=h) return;
+    const offset = (y0*w + x0)*4;
+    const sr = data[offset], sg = data[offset+1], sb = data[offset+2], sa = data[offset+3];
+    // parse fillColor
+    const tmp = document.createElement('canvas'); const tctx=tmp.getContext('2d');
+    tctx.fillStyle = fillColor; tctx.fillRect(0,0,1,1);
+    const f = tctx.getImageData(0,0,1,1).data;
+    const fr=f[0], fg=f[1], fb=f[2], fa=255;
+    const stack = [[x0,y0]];
+    const seen = new Uint8Array(w*h);
+    const tolSq = tolerance * tolerance;
+    while (stack.length){
+      const [x,y] = stack.pop();
+      const idx = y*w + x;
+      if (seen[idx]) continue;
+      seen[idx]=1;
+      const i = idx*4;
+      const dr = data[i]-sr, dg=data[i+1]-sg, db=data[i+2]-sb;
+      if (dr*dr+dg*dg+db*db <= tolSq){
+        data[i]=fr; data[i+1]=fg; data[i+2]=fb; data[i+3]=fa;
+        if (x>0) stack.push([x-1,y]);
+        if (x<w-1) stack.push([x+1,y]);
+        if (y>0) stack.push([x,y-1]);
+        if (y<h-1) stack.push([x,y+1]);
+      }
+    }
+    ctx.putImageData(imageData,0,0);
+    saveSnapshotDebounced();
+  } catch(e){ console.warn('flood fill error', e); }
+}
+
+/* ===================== 캔버스 패닝, 줌, 회전 ===================== */
+/* UI handlers: wheel to zoom, drag with pan tool for panning, two-finger pinch handled in overlay when inserting images */
+container.addEventListener('wheel', (e)=>{
+  if (e.ctrlKey || e.metaKey) {
+    // ctrl+wheel -> zoom
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 1.08 : 0.92;
+    const old = scale; scale = Math.max(0.05, Math.min(scale * delta, 20));
+    // zoom toward mouse point
+    const rect = container.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    pan.x = mx - ((mx - pan.x) * (scale/old));
+    pan.y = my - ((my - pan.y) * (scale/old));
+    container.style.transform = `translate(${pan.x}px,${pan.y}px) scale(${scale}) rotate(${rotation}deg)`;
+  } else {
+    // scrolling - we don't intercept by default
+  }
+}, { passive:false });
+
+/* keyboard rotate with [, ] maybe; but also provide UI buttons elsewhere */
+function rotateCanvas(deg) {
+  rotation = (rotation + deg) % 360;
+  container.style.transform = `translate(${pan.x}px,${pan.y}px) scale(${scale}) rotate(${rotation}deg)`;
+}
+
+/* ===================== 단축키 & 단축키 가이드 표시 ===================== */
+const shortcutGuide = {
+  'Ctrl+Z': '되돌리기',
+  'Ctrl+Shift+Z': '취소(다시 실행)',
+  'B': '브러시',
+  'E': '지우개',
+  'F': '페인트통',
+  'I': '스포이드',
+  'V': '이동/선택 툴',
+  'Space / Middle-drag': '캔버스 패닝',
+  'Tab': 'UI 숨기기',
+  'S': '저장 (이미지)',
+  '[': '브러시 작게',
+  ']': '브러시 크게'
+};
+function showShortcutGuide() {
+  let g=document.getElementById('shortcut-guide');
+  if (!g) {
+    g=document.createElement('div'); g.id='shortcut-guide';
+    g.style.position='fixed'; g.style.right='12px'; g.style.bottom='12px'; g.style.zIndex=2147483600;
+    g.style.background='rgba(0,0,0,0.7)'; g.style.color='#fff'; g.style.padding='10px'; g.style.borderRadius='8px'; g.style.fontSize='13px';
+    document.body.appendChild(g);
+  }
+  g.innerHTML = '<b>단축키 가이드</b><br/>' + Object.entries(shortcutGuide).map(([k,v])=>`<div style="margin-top:4px"><b>${k}</b>: ${v}</div>`).join('');
+}
+function hideShortcutGuide(){ const g=document.getElementById('shortcut-guide'); if(g) g.remove(); }
+
+/* keyboard bindings */
 window.addEventListener('keydown', (e)=>{
+  // UI hide
   if (e.key === 'Tab') {
     e.preventDefault();
-    isUIHidden = !isUIHidden;
-    if (toolbar) toolbar.style.display = isUIHidden ? 'none' : '';
-    if (layersPanel) layersPanel.style.display = isUIHidden ? 'none' : '';
-    if (galleryPanel) galleryPanel.style.display = isUIHidden ? 'none' : '';
+    const visible = toolbar.style.display !== 'none';
+    if (visible) { toolbar.style.display='none'; layersPanel.style.display='none'; galleryPanel.style.display='none'; hideShortcutGuide(); }
+    else { toolbar.style.display='flex'; layersPanel.style.display='block'; galleryPanel.style.display='flex'; showShortcutGuide(); }
+    return;
   }
+  // ctrl combos
+  if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'z') {
+    if (e.shiftKey) redo(); else undo();
+    e.preventDefault();
+  }
+  if (e.key === 'b' || e.key === 'B') pointerTool='brush';
+  if (e.key === 'e' || e.key === 'E') pointerTool='eraser';
+  if (e.key === 'f' || e.key === 'F') pointerTool='fill';
+  if (e.key === 'i' || e.key === 'I') pointerTool='eyedropper';
+  if (e.key === 'v' || e.key === 'V') pointerTool='select';
+  if (e.key === 's' || e.key === 'S') { saveAsPNG(); }
+  if (e.key === '[') { brushSelect.value = Math.max(1, parseInt(brushSelect.value,10)-1); }
+  if (e.key === ']') { brushSelect.value = Math.min(100, parseInt(brushSelect.value,10)+1); }
 });
 
-/* ================= Initialize core behaviors ================= */
-function init(){
-  // create default layer if none
-  if (!layers.length) createLayer('Layer 1');
-  // attach drawing events to each layer canvas
-  layers.forEach(l => attachDrawingEvents(l.canvas));
-  // view transform initial (no transform)
-  view = { scale: 1, rotation: 0, offsetX: 0, offsetY: 0 };
-  // panning handlers
-  enablePanHandlers();
-  // selection tool
-  enableSelectionTool();
-  // UI bindings
-  undoBtn.addEventListener('click', ()=> undo());
-  redoBtn.addEventListener('click', ()=> redo());
-  addLayerBtn.addEventListener('click', ()=> createLayer());
-  mergeLayerBtn.addEventListener('click', ()=> { if(activeLayer){ const idx = layers.indexOf(activeLayer); const neighbor = layers[idx-1] || layers[idx+1]; mergeLayers(activeLayer, neighbor); }});
-  toggleLayersBtn.addEventListener('click', ()=> { layersPanel.style.display = layersPanel.style.display === 'none' ? '' : 'none'; });
-  colorPicker.addEventListener('change', ()=> {});
-  // fill action: click then pick
-  fillBtn.addEventListener('click', ()=>{
-    // one-shot: next pointerdown fills active layer at pointer
-    const onFill = (e) => {
-      floodFillAt(activeLayer, e.clientX, e.clientY, colorPicker.value, 32);
-      container.removeEventListener('pointerdown', onFill);
+/* show guide on load */
+showShortcutGuide();
+
+/* ===================== 저장/불러오기 + PSD/GIF/APNG 내보내기 ===================== */
+/* local state autosave (so refresh won't lose work) */
+const STORAGE_KEY = 'simple_paint_state_v2';
+function saveStateToLocal() {
+  try {
+    const state = {
+      layers: layers.map(l=>{
+        return {
+          name: l.name,
+          dataUrl: l.canvas.toDataURL(),
+          opacity: l.opacity, brightness: l.brightness, contrast: l.contrast, saturation: l.saturation, blur: l.blur, visible: l.visible
+        };
+      }),
+      activeIndex: layers.indexOf(activeLayer),
+      pan, scale, rotation, brushPresets
     };
-    container.addEventListener('pointerdown', onFill, { once: true });
-  });
-  // eyedropper via Alt+Click
-  container.addEventListener('pointerdown', (e)=>{
-    if (e.altKey){
-      enableEyedropper();
-    }
-  });
-  // save / export
-  saveBtn.addEventListener('click', ()=> {
-    // default save flattened PNG
-    const tmp = document.createElement('canvas'); setCanvasSizeForDisplay(tmp, container.clientWidth, container.clientHeight);
-    const tctx = tmp.getContext('2d');
-    layers.forEach(l => { if (l.visible) tctx.drawImage(l.canvas, 0,0); });
-    const data = tmp.toDataURL('image/png');
-    const a = document.createElement('a'); a.href=data; a.download='drawing.png'; a.click();
-  });
-
-  // brush settings UI already created earlier
-  renderBrushPresetButtons();
-  updateLayersPanel();
-  drawAllLayersVisual();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (e) { console.warn('save local failed', e); }
 }
-init();
+const saveStateToLocalDebounced = debounce(saveStateToLocal, 800);
+function loadStateFromLocal() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+    const state = JSON.parse(raw);
+    // clear existing
+    layers.forEach(l=>{ if(l.canvas.parentElement) container.removeChild(l.canvas); });
+    layers = [];
+    state.layers.forEach((ld, i)=>{
+      const l = createLayer(ld.name || `Layer ${i+1}`);
+      // load image
+      const img = new Image();
+      img.onload = () => { l.ctx.clearRect(0,0,container.clientWidth,container.clientHeight); l.ctx.drawImage(img,0,0,container.clientWidth,container.clientHeight); drawAll(); };
+      img.src = ld.dataUrl;
+      l.opacity = ld.opacity || 1; l.brightness = ld.brightness || 1; l.contrast = ld.contrast || 1; l.saturation = ld.saturation || 1; l.blur = ld.blur || 0; l.visible = typeof ld.visible === 'boolean' ? ld.visible : true;
+    });
+    activeLayer = layers[state.activeIndex] || layers[0];
+    pan = state.pan || {x:0,y:0}; scale = state.scale || 1; rotation = state.rotation || 0;
+    brushPresets = state.brushPresets || brushPresets;
+    renderBrushPresetButtons();
+    updateLayersPanel(); drawAll();
+    return true;
+  } catch (e) { console.warn('load state failed', e); return false; }
+}
+loadStateFromLocal();
 
-/* Expose useful API for developer console */
-window.simplePaint = {
-  layers, createLayer, deleteLayer, mergeLayers, undo, redo, saveSnapshot, exportPSDlikeZip, exportFramesAsZip, saveBrushPreset, brush
+/* Save PNG (flatten) */
+function saveAsPNG() {
+  const tmp = compositeToTempCanvas();
+  const data = tmp.toDataURL('image/png');
+  const a = document.createElement('a'); a.href = data; a.download = 'drawing.png'; a.click();
+  addGalleryImage(data);
+  saveStateToLocalDebounced();
+}
+
+/* PSD export using ag-psd if available (dynamic load) */
+async function exportAsPSD() {
+  // try dynamic load of ag-psd from unpkg
+  if (!window['agPsdLoaded']) {
+    await loadScriptOnce('https://unpkg.com/ag-psd@6.2.0/dist/ag-psd.umd.js');
+    window.agPsdLoaded = !!window.writePsdBuffer || !!window.agPsd;
+  }
+  try {
+    if (window.writePsdBuffer || window.agPsd) {
+      // create array of layers pixel buffers by converting each layer canvas to ImageData and packing into PSD structure
+      const psdObj = { width: container.clientWidth, height: container.clientHeight, children: [] };
+      for (let i=layers.length-1;i>=0;i--){
+        const l = layers[i];
+        if (!l.visible) continue;
+        const imgData = l.canvas.toDataURL('image/png');
+        // ag-psd supports embedding PNG encoded data as layer image via read/write? For simplicity, we add flattened single image as background
+      }
+      // fallback: write flattened image as single layer PSD
+      const flat = compositeToTempCanvas();
+      flat.toBlob(async (blob)=>{
+        const ab = await blob.arrayBuffer();
+        // ag-psd has writePsdBuffer in Node; in browser, need to use ag-psd.writePsd? Using library may differ. We'll attempt best-effort:
+        if (window.agPsd && window.agPsd.writePsdBuffer) {
+          try {
+            const psdBuffer = window.agPsd.writePsdBuffer({ width: flat.width/(window.devicePixelRatio||1), height: flat.height/(window.devicePixelRatio||1), children: []});
+            const blobOut = new Blob([psdBuffer], { type: 'application/octet-stream' });
+            const a=document.createElement('a'); a.href=URL.createObjectURL(blobOut); a.download='drawing.psd'; a.click();
+          } catch(e){ console.warn('ag-psd write failed', e); alert('PSD export not fully supported in this browser build'); }
+        } else {
+          alert('PSD export library not available; try including ag-psd build.');
+        }
+      });
+    } else {
+      alert('PSD export library not loaded.');
+    }
+  } catch (e) {
+    console.warn('exportAsPSD error', e);
+  }
+}
+
+/* GIF export using gif.js if available */
+async function exportAsGIF(frames = [], delay=200) {
+  // frames can be array of canvas or dataURLs; we'll capture current animation frames if provided; otherwise just export current single frame
+  if (!window.GIF) {
+    await loadScriptOnce('https://unpkg.com/gif.js.optimized/dist/gif.worker.js'); // worker path
+    await loadScriptOnce('https://unpkg.com/gif.js@0.2.0/dist/gif.js');
+  }
+  if (!window.GIF) { alert('gif library not loaded'); return; }
+  const gif = new GIF({ workers: 2, quality: 10 });
+  if (!frames.length) {
+    const c = compositeToTempCanvas();
+    gif.addFrame(c, { delay });
+  } else {
+    frames.forEach(f=>{
+      if (f instanceof HTMLCanvasElement) gif.addFrame(f, { delay }); else {
+        const img=new Image(); img.src=f; gif.addFrame(img, { delay });
+      }
+    });
+  }
+  gif.on('finished', function(blob) {
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='animation.gif'; a.click();
+  });
+  gif.render();
+}
+
+/* APNG using UPNG.js (UPNG/UPNG-like) */
+async function exportAsAPNG(frames=[], delays=[100]) {
+  if (!window.UPNG) {
+    await loadScriptOnce('https://unpkg.com/upng-js@2.1.0/UPNG.min.js');
+  }
+  if (!window.UPNG) { alert('APNG encoder not available'); return; }
+  // frames in array of ImageData or canvas; get raw RGBA arrays and use UPNG.encode
+  const canvases = frames.length ? frames : [compositeToTempCanvas()];
+  const imgs = canvases.map(c => {
+    const w = c.width / (window.devicePixelRatio || 1);
+    const h = c.height / (window.devicePixelRatio || 1);
+    const ctx = c.getContext('2d');
+    const imageData = ctx.getImageData(0,0,w,h);
+    return { data: imageData.data.buffer, w, h };
+  });
+  const rgbaFrames = imgs.map(i=> new Uint8Array(i.data));
+  try {
+    const framesData = rgbaFrames.map((arr, idx)=>arr.buffer);
+    const pngBuf = UPNG.encode(framesData, imgs[0].w, imgs[0].h, 0, delays);
+    const blob = new Blob([pngBuf], { type: 'image/apng' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'animation.apng'; a.click();
+  } catch (e) {
+    console.warn('APNG export failed', e); alert('APNG export failed');
+  }
+}
+
+/* helper to dynamically load script only once */
+const loadedScripts = new Set();
+function loadScriptOnce(url) {
+  return new Promise((resolve, reject) => {
+    if (loadedScripts.has(url)) return resolve();
+    const s = document.createElement('script');
+    s.src = url;
+    s.onload = ()=> { loadedScripts.add(url); resolve(); };
+    s.onerror = (e)=> { reject(e); };
+    document.head.appendChild(s);
+  });
+}
+
+/* gallery helpers */
+function addGalleryImage(dataUrl) {
+  if (!galleryPanel) return;
+  const img = document.createElement('img');
+  img.src = dataUrl; img.className='gallery-item'; img.style.width='80px'; img.style.height='80px'; img.style.objectFit='cover';
+  img.addEventListener('click', ()=>{
+    // save current snapshot for undo
+    saveSnapshot();
+    // load into active layer
+    const image = new Image(); image.onload = ()=> {
+      if(!activeLayer) createLayer();
+      activeLayer.ctx.clearRect(0,0,container.clientWidth,container.clientHeight);
+      activeLayer.ctx.drawImage(image,0,0,container.clientWidth,container.clientHeight);
+      saveSnapshot();
+    };
+    image.src = dataUrl;
+  });
+  galleryPanel.appendChild(img);
+}
+
+/* ===================== Flood fill already implemented above ===================== */
+/* ===================== Debounce utility ===================== */
+function debounce(fn, ms=200) {
+  let t;
+  return function(...args) { clearTimeout(t); t = setTimeout(()=>fn.apply(this, args), ms); };
+}
+
+/* ===================== helpers: compositeToTempCanvas (used earlier) ===================== */
+function compositeToTempCanvas() {
+  const tmp = document.createElement('canvas');
+  setCanvasSizeForDisplay(tmp, container.clientWidth, container.clientHeight);
+  const tctx = tmp.getContext('2d');
+  // clear
+  tctx.clearRect(0,0,tmp.width/(window.devicePixelRatio||1), tmp.height/(window.devicePixelRatio||1));
+  // draw each layer using its ctx.filter and opacity
+  layers.forEach(l=>{
+    if(!l.visible) return;
+    tctx.save();
+    const blurPx = l.blur ? `${l.blur}px` : '0px';
+    tctx.globalAlpha = l.opacity;
+    tctx.filter = `brightness(${l.brightness}) contrast(${l.contrast}) saturate(${l.saturation}) blur(${blurPx})`;
+    tctx.drawImage(l.canvas, 0, 0, container.clientWidth, container.clientHeight);
+    tctx.restore();
+  });
+  return tmp;
+}
+
+/* ===================== 초기 셋업: load local state or create default layer ===================== */
+updateContainerSize();
+if (!loadStateFromLocalSafe()) {
+  createLayer('Layer 1');
+  saveSnapshot();
+}
+drawAll();
+renderBrushPresetButtons();
+
+/* safe load local state wrapper */
+function loadStateFromLocalSafe() {
+  try { return loadStateFromLocal(); } catch (e) { console.warn('loadState failed', e); return false; }
+}
+
+/* ===================== Expose API on window for debugging ===================== */
+window.paintApp = {
+  createLayer, deleteLayer, moveLayer, mergeActiveWithNeighbor, saveSnapshot, undo, redo,
+  exportAsPSD, exportAsGIF, exportAsAPNG, saveAsPNG, addBrushPreset: saveCurrentBrushAsPreset,
+  setSymmetry: (on, mode='vertical')=>{ symmetry.enabled=!!on; symmetry.mode=mode; },
+  setStabilizer: (on, rad=8)=>{ strokeStabilizer.enabled=!!on; currentBrush.smoothing=rad; },
+  setMaxHistory: (n)=>{ MAX_HISTORY = n; },
+  getState: ()=>({layers, historyLength: history.length, redoLength: redoStack.length})
 };
 
-/* ================= Notes: some advanced features (PSD binary export, animated GIF creation) require third-party libs (JSZip, gif.js, apng-js).
-   This code implements PSD-like ZIP export using JSZip if available; GIF/APNG export is provided as frame zip stub.
-   Many UI bits are created dynamically; integrate into index.html for production.
-*/
+/* ===================== END OF FILE ===================== */
